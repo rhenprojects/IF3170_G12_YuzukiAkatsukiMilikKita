@@ -12,6 +12,8 @@ class KNN:
         self.y_train.append(y)
 
     def predict(self, x:list):
+        self.d = []
+
         # Hitung jarak antara data masukin ke list d 
         for i in range(len(self.x_train)):
             d: float = numeric_distance(self.x_train[i], x)
