@@ -1,3 +1,5 @@
+import pickle
+
 import numpy as np
 
 # Referensi
@@ -112,3 +114,13 @@ class LogisticRegression:
     # p >= threshold jadi kelas 1
     def predict(self, X, threshold=0.5):
         return (self.predict_proba(X) >= threshold).astype(int)
+
+    # simpan seluruh model ke file
+    def save(self, path):
+        with open(path, "wb") as f:
+            pickle.dump(self, f)
+
+    # muat model dari file hasil save
+    def load(path):
+        with open(path, "rb") as f:
+            return pickle.load(f)
