@@ -1,17 +1,21 @@
 import numpy as np
 
-# Referensi: slide IF3170 Materi 11 (Linear & Logistic Regression),
-# update stochastic gradient ascent: bj = bj + eta * (yi - pi) * xij
-# L2: C. Guestrin, slide CSE 546 "Logistic Regression, Gradient" (University of Washington, 2013),
-#     bagian regularized conditional log likelihood dan regularized update
-#     Hastie, Tibshirani, Friedman, The Elements of Statistical Learning ed. 2, subbab 3.4.1 (ridge),
-#     alasan bias tidak ikut dipenalti
+# Referensi
+# Logistic regression dan stochastic gradient ascent:
+#   - Slide IF3170 Materi 11, Linear Regression & Logistic Regression, ITB
+# L2:
+#   - C. Guestrin, slide CSE 546 "Logistic Regression, Gradient", University of Washington (2013)
+# L1 (bobot dipotong di nol setelah update, bukan metode cumulative penalty):
+#   - Tsuruoka, Tsujii, Ananiadou (2009), Stochastic Gradient Descent Training for
+#     L1-regularized Log-linear Models with Cumulative Penalty, ACL-IJCNLP, bagian 3
 
 
 class LogisticRegression:
     # weights[0] adalah bias, sisanya bobot tiap fitur
-    def __init__(self, learning_rate=0.01, n_epochs=100, penalty=None, reg_lambda=0.0,
-                 random_state=42):
+    def __init__(self, learning_rate=0.01, n_epochs=100, penalty=None, reg_lambda=0.0, random_state=42):
+        if penalty not in (None, "l1", "l2"):
+            raise ValueError("penalty harus None, 'l1', atau 'l2'")
+
         self.learning_rate = learning_rate
         self.n_epochs = n_epochs
         self.random_state = random_state
@@ -27,7 +31,12 @@ class LogisticRegression:
         score = np.clip(score, -500, 500)
         return 1 / (1 + np.exp(-score))
 
-    # rata-rata log-loss ditambah penalti, makin kecil makin bagus
+    # tambah kolom 1 supaya bias dihitung sebagai x0
+    def add_bias_column(self, X):
+        ones = np.ones((X.shape[0], 1))
+        return np.hstack([ones, X])
+
+    # rata-rata log-loss ditambah penalti L1 atau L2, makin kecil makin bagus
     def log_loss(self, X_bias, y):
         prob = self.sigmoid(X_bias @ self.weights)
         prob = np.clip(prob, 1e-12, 1 - 1e-12)
@@ -36,11 +45,13 @@ class LogisticRegression:
 
         if self.penalty == "l2":
             loss += self.reg_lambda / 2 * np.sum(self.weights[1:] ** 2)
+        elif self.penalty == "l1":
+            loss += self.reg_lambda * np.sum(np.abs(self.weights[1:]))
 
         return loss
 
-    # turunan penalti, bias (weights[0]) tidak ikut dihukum
-    def penalty_gradient(self):
+    # turunan penalti L2, bias (weights[0]) tidak ikut dipenalti
+    def l2_gradient(self):
         grad = np.zeros_like(self.weights)
 
         if self.penalty == "l2":
@@ -48,12 +59,12 @@ class LogisticRegression:
 
         return grad
 
-    # tambah kolom 1 supaya bias dihitung sebagai x0
-    def add_bias_column(self, X):
-        ones = np.ones((X.shape[0], 1))
-        return np.hstack([ones, X])
+    # L1: kecilkan tiap bobot sebesar step, kalau melewati nol berhenti di nol
+    def shrink_l1(self, step):
+        w = self.weights[1:]
+        self.weights[1:] = np.sign(w) * np.maximum(np.abs(w) - step, 0)
 
-    # urutan data diacak tiap epoch
+    # latih bobot dengan stochastic gradient ascent, urutan data diacak tiap epoch
     def fit(self, X, y):
         X = np.asarray(X, dtype=float)
         y = np.asarray(y, dtype=float)
@@ -71,8 +82,11 @@ class LogisticRegression:
                 prob = self.sigmoid(score)
                 error = y[row] - prob
 
-                gradient = error * X_bias[row] - self.penalty_gradient()
+                gradient = error * X_bias[row] - self.l2_gradient()
                 self.weights += self.learning_rate * gradient
+
+                if self.penalty == "l1":
+                    self.shrink_l1(self.learning_rate * self.reg_lambda)
 
             self.loss_history.append(self.log_loss(X_bias, y))
 
