@@ -25,14 +25,37 @@ class DecisionTree:
         
         return entropy
     
-    def _gain(self, y_parent: list[any], y_child: list[list[any]]) -> float:
+    def _gain(self, y_parent: list[any], y_children: list[list[any]]) -> float:
         entropy_s = self._calculate_entropy(y_parent)
         gain = entropy_s
         
-        for unique in y_child:
+        for unique in y_children:
             gain -= (len(unique) / len(y_parent)) * self._calculate_entropy(unique)
             
         return gain
+    
+    def _split_information(self, y_children: list[list[any]]) -> float:
+        value = 0
+        total = 0
+        for child in y_children:
+            total += len(child)
+            
+        for child in y_children:
+            p = len(child) / total
+            if (p == 0):
+                continue
+            
+            value -= p * np.log2(p)
+            
+        return value
+    
+    def _gain_ratio(self, y_parent: list[any], y_children: list[list[any]]) -> float:
+        gain = self._gain(y_parent, y_children)
+        split_information = self._split_information(y_children)
+        if (split_information == 0):
+            return None
+        
+        return gain / split_information
         
     def _find_best_attribute(self, x, y):
         # TODO
