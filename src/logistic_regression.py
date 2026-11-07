@@ -8,9 +8,9 @@ import numpy as np
 # Bentuk penalti L1, L2, dan Elastic Net (reg_lambda, l1_ratio, bias tidak dipenalti):
 #   - Friedman, Hastie, Tibshirani (2010), Regularization Paths for Generalized Linear Models
 #     via Coordinate Descent, Journal of Statistical Software 33(1), bagian 2 dan 3
-# L1 pada SGD (bobot dipotong di nol setelah update, bukan metode cumulative penalty):
+# L1 pada SGD (metode clipping: bobot dipotong di nol setelah update, bukan cumulative penalty):
 #   - Tsuruoka, Tsujii, Ananiadou (2009), Stochastic Gradient Descent Training for
-#     L1-regularized Log-linear Models with Cumulative Penalty, ACL-IJCNLP, bagian 3
+#     L1-regularized Log-linear Models with Cumulative Penalty, ACL-IJCNLP, bagian 3.1
 
 
 class LogisticRegression:
