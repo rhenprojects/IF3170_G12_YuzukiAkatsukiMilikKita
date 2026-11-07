@@ -14,7 +14,7 @@ class KNN:
     def predict(self, x:list):
         # Hitung jarak antara data masukin ke list d 
         for i in range(len(self.x_train)):
-            d: float = distance(self.x_train[i], x)
+            d: float = numeric_distance(self.x_train[i], x)
             self.d.append([d, self.y_train[i]])
 
         # Urutkan daru jarak yang paling kecil
@@ -40,11 +40,21 @@ class KNN:
 
         return result
 
-# Euqlidean Distance
-def distance(a, b):
+# Euqlidean Distance for data numerik
+def numeric_distance(a, b):
     total = 0
 
     for i in range(len(a)):
         total += (a[i] - b[i]) ** 2
 
     return total ** 0.5
+
+# Euqlidean Distance for data kategorikal
+def categorical_distance(a, b):
+    total = 0
+
+    for i in range(len(a)):
+        if a[i] != b[i]:
+            total += 1
+
+    return total
