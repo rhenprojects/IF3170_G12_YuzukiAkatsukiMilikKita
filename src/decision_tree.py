@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -10,7 +10,7 @@ import pandas as pd
 class Node:
     prediction: any
     attr_idx: int | None = None
-    children: dict[any, Node] = {}
+    children: dict[any, Node] = field(default_factory=dict)
     
 
 class DecisionTree:
@@ -19,7 +19,7 @@ class DecisionTree:
         self.max_depth = max_depth
 
     def fit(self, X, y):
-        self._build_tree(X, y, 0)
+        self.root = self._build_tree(X, y, 0)
         # TODO
         pass
 
@@ -116,5 +116,11 @@ class DecisionTree:
         return node
         
     def _predict_one(self, row):
-        #TODO
-        pass
+        node = self.root
+        while node.attr_idx is not None:
+            next = node.children.get(row[node.attr_idx])
+            if next is None:
+                return node.prediction
+            node = next
+            
+        return node.prediction
