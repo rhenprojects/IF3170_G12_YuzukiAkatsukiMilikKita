@@ -11,6 +11,7 @@ class Node:
     prediction: any
     attr_idx: int | None = None
     children: dict[any, Node] = field(default_factory=dict)
+    threshold: float | None = None
     
 
 class DecisionTree:
@@ -19,12 +20,19 @@ class DecisionTree:
         self.max_depth = max_depth
         self.root = None
         self.column_names = None
+        self.numeric_columns = None
 
     def fit(self, X: pd.DataFrame, y: pd.Series):
         X_np = X.to_numpy()
         y_np = y.to_numpy()
         if (X_np.ndim != 2 or y_np.ndim != 1 or len(X_np) != len(y_np) or len(y) == 0):
             raise ValueError("Data yang diberikan tidak valid")
+
+        self.numeric_columns = [
+            pd.api.types.is_numeric_dtype(dtype)
+            and not pd.api.types.is_bool_dtype(dtype)
+            for dtype in X.dtypes
+        ]
         
         self.root = self._build_tree(X_np, y_np, depth=0)
         self.column_names = X.columns
@@ -88,24 +96,45 @@ class DecisionTree:
         
     def _find_best_attribute(self, X: np.ndarray, y: np.ndarray):
         best_attr = None
+        best_threshold = None
         best_score = -np.inf
         for attr_idx in range(X.shape[1]):
-            #TODO numeric case
-            unique_values = np.unique(X[:, attr_idx])
-            children = []
-            for value in unique_values:
-                mask = X[:, attr_idx] == value
-                children.append(y[mask])
-            
-            score = self._gain_ratio(y, children)
-            if score == None:
-                continue
-            
-            if score > best_score:
-                best_score = score
-                best_attr = attr_idx
+            if self.numeric_columns[attr_idx]:
+                values = np.asarray(X[:, attr_idx], dtype=float)
+                unique_values = np.unique(values)
+                # Coba batas di antara setiap pasangan nilai berurutan
+                for low, high in zip(unique_values[:-1], unique_values[1:]):
+                    threshold = low / 2 + high / 2
+                    if threshold >= high:  # Antisipasi pembulatan float.
+                        threshold = low
+                        
+                    mask = values <= threshold
+                    if not mask.any() or mask.all():
+                        continue
+                    
+                    score = self._gain_ratio(y, [y[mask], y[~mask]])
+                    if score is not None and score > best_score:
+                        best_score = score
+                        best_attr = attr_idx
+                        best_threshold = float(threshold)
+                        
+            else:
+                unique_values = np.unique(X[:, attr_idx])
+                children = []
+                for value in unique_values:
+                    mask = X[:, attr_idx] == value
+                    children.append(y[mask])
+                
+                score = self._gain_ratio(y, children)
+                if score == None:
+                    continue
+                
+                if score is not None and score > best_score:
+                    best_score = score
+                    best_attr = attr_idx
+                    best_threshold = None
         
-        return best_attr
+        return best_attr, best_threshold
         
     def _build_tree(self, X: np.ndarray, y: np.ndarray, depth: int) -> Node:
         labels, counts = np.unique(y, return_counts=True)
@@ -119,20 +148,34 @@ class DecisionTree:
             return node
                 
         # Cari atribut terbaik
-        node.attr_idx = self._find_best_attribute(X, y)
+        node.attr_idx, node.threshold = self._find_best_attribute(X, y)
         if node.attr_idx == None:
             return node
-        
-        for value in np.unique(X[:, node.attr_idx]):
-            mask = X[:, node.attr_idx] == value
-            node.children[value] = self._build_tree(X[mask], y[mask], depth+1)
+
+        if node.threshold is not None:
+            values = np.asarray(X[:, node.attr_idx], dtype=float)
+            mask = values <= node.threshold
+            node.children["<="] = self._build_tree(X[mask], y[mask], depth+1)
+            node.children[">"] = self._build_tree(X[~mask], y[~mask], depth+1)
             
+        else:
+            for value in np.unique(X[:, node.attr_idx]):
+                mask = X[:, node.attr_idx] == value
+                node.children[value] = self._build_tree(X[mask], y[mask], depth+1)
+                
         return node
         
     def _predict_one(self, row):
         node = self.root
         while node.attr_idx is not None:
-            next = node.children.get(row[node.attr_idx])
+            if node.threshold is not None:
+                if float(row[node.attr_idx]) <= node.threshold:
+                    next_idx = "<="
+                else:
+                    next_idx = ">"
+            else:
+                next_idx = row[node.attr_idx]
+            next = node.children.get(next_idx)
             if next is None:
                 return node.prediction
             node = next
