@@ -8,7 +8,9 @@ import pandas as pd
 
 @dataclass
 class Node:
-    children: list
+    prediction: any
+    attr_idx: int | None = None
+    children: dict[any, Node] = {}
     
 
 class DecisionTree:
@@ -17,7 +19,7 @@ class DecisionTree:
         self.max_depth = max_depth
 
     def fit(self, X, y):
-        self._build_tree(X, y)
+        self._build_tree(X, y, 0)
         # TODO
         pass
 
@@ -91,10 +93,28 @@ class DecisionTree:
         
         return best_attr
         
-    def _build_tree(self, X: np.ndarray, y: np.ndarray):
-        #TODO
-        pass
-    
-    def _predict_one(self, data):
+    def _build_tree(self, X: np.ndarray, y: np.ndarray, depth: int) -> Node:
+        labels, counts = np.unique(y, return_counts=True)
+        node = Node(prediction=labels[np.argmax(counts)])
+        
+        # Jadikan leaf node jika hasil seragam
+        if (
+            len(labels) == 1
+            or (self.max_depth is not None and depth >= self.max_depth)
+        ):
+            return node
+                
+        # Cari atribut terbaik
+        node.attr_idx = self._find_best_attribute(X, y)
+        if node.attr_idx == None:
+            return node
+        
+        for value in np.unique(X[:, node.attr_idx]):
+            mask = X[:, node.attr_idx] == value
+            node.children[value] = self._build_tree(X[mask], y[mask], depth+1)
+            
+        return node
+        
+    def _predict_one(self, row):
         #TODO
         pass
