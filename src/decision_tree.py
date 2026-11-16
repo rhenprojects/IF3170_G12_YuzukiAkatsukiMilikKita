@@ -17,15 +17,29 @@ class DecisionTree:
     def __init__(self, criterion="entropy", max_depth=None):
         self.criterion = criterion
         self.max_depth = max_depth
+        self.root = None
+        self.column_names = None
 
-    def fit(self, X, y):
-        self.root = self._build_tree(X, y, 0)
-        # TODO
-        pass
+    def fit(self, X: pd.DataFrame, y: pd.Series):
+        X_np = X.to_numpy()
+        y_np = y.to_numpy()
+        if (X_np.ndim != 2 or y_np.ndim != 1 or len(X_np) != len(y_np) or len(y) == 0):
+            raise ValueError("Data yang diberikan tidak valid")
+        
+        self.root = self._build_tree(X_np, y_np, depth=0)
+        self.column_names = X.columns
+        
+        return self
 
-    def predict(self, X):
-        # TODO
-        pass
+    def predict(self, X: pd.DataFrame):
+        if (self.root is None):
+            raise ValueError("Panggil fit() agar model bisa memprediksi")
+        if (not X.columns.equals(self.column_names)):
+            raise ValueError("Kolom data training dan uji berbeda")
+
+        X_np = X.to_numpy()
+        
+        return np.asarray([self._predict_one(row) for row in X_np])
     
     def _calculate_entropy(self, y: np.ndarray) -> float:
         entropy = 0
