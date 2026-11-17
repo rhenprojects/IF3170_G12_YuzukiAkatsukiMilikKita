@@ -39,21 +39,46 @@ class KNN:
         self.d = [[distances[index], self.y_train[index]] for index in nearest_indexes]
         neighbor = self.d
 
-        # Kalau ada yg sama ambil yg nilai y nya paling banyak
-        labels = []
+        # Ambil label dengan jarak nol
+        zero_distance_labels = []
+
         for data in neighbor:
-            labels.append(data[1])
+            distance = data[0]
+            label = data[1]
 
-        result = labels[0]
-        max_label_count = 0
+            if distance == 0:
+                zero_distance_labels.append(label)
 
-        for y in labels:
-            label_count = labels.count(y)
+        # Jika ada jarak nol, gunakan label yang paling banyak
+        if len(zero_distance_labels) > 0:
+            result = zero_distance_labels[0]
+            max_label_count = 0
 
-            if label_count > max_label_count:
-                max_label_count = label_count
-                result = y
+            for label in zero_distance_labels:
+                label_count = zero_distance_labels.count(label)
 
+                if label_count > max_label_count:
+                    max_label_count = label_count
+                    result = label
+
+            return result
+
+        # Hitung total distance weight setiap label
+        label_weights = {}
+
+        for data in neighbor:
+            distance = data[0]
+            label = data[1]
+
+            weight = 1 / distance
+
+            if label not in label_weights:
+                label_weights[label] = 0
+
+            label_weights[label] += weight
+
+        # Ambil label dengan total weight terbesar
+        result = max(label_weights, key=label_weights.get)
         return result
 
 # Manhattan Distance for data numerik
