@@ -1,29 +1,43 @@
+import numpy as np
+
 K_VALUE = 5
 
 class KNN:
-    def __init__(self, k=K_VALUE):
+    def __init__(self, k):
         self.k = k
-        self.x_train: list[list] = []
-        self.y_train: list = []
+        self.x_train = None
+        self.y_train = None
         self.d: list[list] = []
 
-    def fit(self, x: list, y: list):
-        self.x_train.append(x)
-        self.y_train.append(y)
+    def fit(self, x, y):
+        # Simpan seluruh data training
+        self.x_train = np.asarray(x, dtype=float)
+        self.y_train = np.asarray(y)
+        return self
 
     def predict(self, x:list):
-        self.d = []
+        # Ubah data prediksi menjadi array NumPy
+        x = np.asarray(x, dtype=float)
 
-        # Hitung jarak antara data masukin ke list d 
-        for i in range(len(self.x_train)):
-            d: float = numeric_distance(self.x_train[i], x)
-            self.d.append([d, self.y_train[i]])
+        # Hitung Manhattan distance ke seluruh data training
+        distances = np.sum(np.abs(self.x_train - x), axis=1)
 
-        # Urutkan daru jarak yang paling kecil
-        self.d.sort()
+        # Jumlah neighbor
+        neighbor_count = self.k
 
-        # Ambil K nilai teratas
-        neighbor = self.d[:self.k]
+        # Gunakan seluruh indeks jika semua data menjadi tetangga
+        if neighbor_count == len(self.x_train):
+            nearest_indexes = np.arange(len(self.x_train))
+        else:
+            # Ambil indeks k jarak terkecil tanpa full sorting
+            nearest_indexes = np.argpartition(distances, neighbor_count - 1)[:neighbor_count]
+
+        # Urutkan k-neigbouurs dengan jarak terdekat
+        nearest_indexes = nearest_indexes[np.argsort(distances[nearest_indexes])]
+
+        # Simpan pasangan jarak dan label neighbor
+        self.d = [[distances[index], self.y_train[index]] for index in nearest_indexes]
+        neighbor = self.d
 
         # Kalau ada yg sama ambil yg nilai y nya paling banyak
         labels = []
@@ -42,16 +56,16 @@ class KNN:
 
         return result
 
-# Euqlidean Distance for data numerik
+# Manhattan Distance for data numerik
 def numeric_distance(a, b):
     total = 0
 
     for i in range(len(a)):
-        total += (a[i] - b[i]) ** 2
+        total += abs(a[i] - b[i])
 
-    return total ** 0.5
+    return total
 
-# Euqlidean Distance for data kategorikal
+# Distance for data kategorikal
 def categorical_distance(a, b):
     total = 0
 
