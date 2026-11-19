@@ -1,5 +1,3 @@
-import pickle
-
 import numpy as np
 
 # Referensi
@@ -115,11 +113,3 @@ class LogisticRegression:
 
     def predict(self, X, threshold=0.5):
         return (self.predict_proba(X) >= threshold).astype(int)
-
-    def save(self, path):
-        with open(path, "wb") as f:
-            pickle.dump(self, f)
-
-    def load(path):
-        with open(path, "rb") as f:
-            return pickle.load(f)

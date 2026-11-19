@@ -5,7 +5,8 @@ import pandas as pd
 from sklearn.linear_model import LogisticRegression as SklearnLogisticRegression
 from sklearn.model_selection import StratifiedKFold
 
-from logistic_regression import LogisticRegression
+from algorithms.logistic_regression import LogisticRegression
+from model_io import load_model, save_model
 
 # Referensi
 # Binning fitur angka (basis piecewise constant) dan interaksi antarfitur (tensor product):
@@ -158,9 +159,12 @@ def main():
 
     output_dir = ROOT / "output"
     output_dir.mkdir(exist_ok=True)
-    model.save(output_dir / "logistic_regression.pkl")
+    model_path = output_dir / "logistic_regression.pkl"
+    save_model(model, model_path)
 
-    prediction = model.predict(X_test, threshold=best["threshold"])
+    loaded = load_model(model_path)
+    prediction = loaded.predict(X_test, threshold=best["threshold"])
+    assert (prediction == model.predict(X_test, threshold=best["threshold"])).all(), "Model hasil load berbeda!"
     submission = pd.DataFrame({"id": test_df["id"], "is_canceled": prediction})
     submission.to_csv(output_dir / "submission_logistic_regression.csv", index=False)
     print("Model dan submission disimpan di folder output/")
