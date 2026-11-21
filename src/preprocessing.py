@@ -99,11 +99,14 @@ def build_naive_bayes_pipeline(n_bins=12):
     return Pipeline([("imputer", build_imputer()), ("preprocessing", preprocessor)])
 
 
-# Referensi binning (basis piecewise constant) dan interaksi antarfitur (tensor product):
-#   - Hastie, Tibshirani, Friedman, The Elements of Statistical Learning ed. 2, subbab 5.2 dan 5.7
+# Referensi
+# Basis expansion (model tetap linear di fitur turunan) dan binning sebagai basis piecewise constant:
+#   - Hastie, Tibshirani, Friedman, The Elements of Statistical Learning ed. 2, subbab 5.1 dan 5.2
+# Interaksi dua arah sebagai perkalian basis antarfitur (tensor product basis):
+#   - Hastie, Tibshirani, Friedman, The Elements of Statistical Learning ed. 2, subbab 5.7
 # Membentuk fitur bin, one-hot, dan interaksi dua arah buat logistic regression, aturannya cuma dari data latih.
 class InteractionFeatures(TransformerMixin, BaseEstimator):
-    def __init__(self, n_bins=20):
+    def __init__(self, n_bins=10):
         self.n_bins = n_bins
 
     def fit(self, data, y=None):
@@ -147,7 +150,7 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
 
 
 # Gak pakai scaler soalnya semua kolom udah 0/1, standardisasi kolom yang jarang aktif malah bikin SGA meledak.
-def build_logistic_regression_pipeline(n_bins=20):
+def build_logistic_regression_pipeline(n_bins=10):
     return Pipeline(
         [
             ("imputer", build_imputer()),
