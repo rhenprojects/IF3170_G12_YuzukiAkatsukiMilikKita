@@ -20,14 +20,12 @@ SEED = 42
 
 N_BINS = 20
 
-# Mencoba kombinasi learning rate, decay, dan kekuatan L2, plus L1 dan Elastic Net terbaik sebagai pembanding.
+# Membandingkan SGA dari slide dengan dua optimizer adaptif, tiap konfigurasi udah yang terbaik dari grid yang lebih besar.
 CONFIGS = [
-    {"learning_rate": lr, "lr_decay": decay, "penalty": "l2", "reg_lambda": lam}
-    for lr in [0.005, 0.01] for decay in [0.7, 0.8] for lam in [0.0003, 0.001]
-]
-CONFIGS += [
-    {"learning_rate": 0.01, "lr_decay": 0.7, "penalty": "l1", "reg_lambda": 0.0001},
-    {"learning_rate": 0.01, "lr_decay": 0.7, "penalty": "elasticnet", "reg_lambda": 0.0003, "l1_ratio": 0.2},
+    {"optimizer": "sga", "learning_rate": 0.01, "lr_decay": 0.7, "penalty": "l2", "reg_lambda": 0.0003},
+    {"optimizer": "adagrad", "learning_rate": 0.03, "penalty": "l2", "reg_lambda": 0.0003},
+    {"optimizer": "adagrad", "learning_rate": 0.05, "penalty": "l1", "reg_lambda": 0.0001},
+    {"optimizer": "adam", "learning_rate": 0.001, "lr_decay": 0.7, "penalty": "l2", "reg_lambda": 0.0003},
 ]
 
 SELECTED_FEATURES = NUMERIC_FEATURES + CATEGORICAL_FEATURES + BINARY_FEATURES
@@ -113,7 +111,8 @@ def make_model(config):
 def make_sklearn_model(config, n_samples):
     l1_ratio = {"l2": 0.0, "l1": 1.0, "elasticnet": config.get("l1_ratio")}[config["penalty"]]
     C = 1 / (config["reg_lambda"] * n_samples)
-    solver = "lbfgs" if l1_ratio == 0 else "saga"
+    # Memakai liblinear buat L1 soalnya saga lambat banget di ribuan fitur, saga cuma buat elasticnet.
+    solver = {0.0: "lbfgs", 1.0: "liblinear"}.get(l1_ratio, "saga")
     return SklearnLogisticRegression(C=C, l1_ratio=l1_ratio, solver=solver, max_iter=1000)
 
 
@@ -121,7 +120,7 @@ def make_sklearn_model(config, n_samples):
 # Fitur dibentuk sekali per fold lalu dipakai semua model, soalnya bagian ini yang paling makan waktu.
 def cross_val_prob(data, y, folds, makers):
     prob = np.zeros((len(makers), len(y)))
-    for train_idx, valid_idx in folds:
+    for k, (train_idx, valid_idx) in enumerate(folds, start=1):
         features = InteractionFeatures().fit(data.iloc[train_idx])
         X_train = features.transform(data.iloc[train_idx])
         X_valid = features.transform(data.iloc[valid_idx])
@@ -131,6 +130,7 @@ def cross_val_prob(data, y, folds, makers):
             # Menyamakan output model sendiri (1 kolom) sama sklearn (2 kolom).
             valid_prob = model.predict_proba(X_valid)
             prob[i, valid_idx] = valid_prob if valid_prob.ndim == 1 else valid_prob[:, 1]
+        print(f"  fold {k}/{len(folds)} selesai", flush=True)
     return prob
 
 
@@ -141,6 +141,7 @@ def main():
 
     folds = list(StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED).split(train_df, y))
 
+    print(f"Mencoba {len(CONFIGS)} konfigurasi dengan 5-fold CV, tiap fold bisa makan beberapa menit...", flush=True)
     makers = [lambda n, config=config: make_model(config) for config in CONFIGS]
     probs = cross_val_prob(train_df, y, folds, makers)
 
@@ -148,7 +149,7 @@ def main():
     for config, prob in zip(CONFIGS, probs):
         score, threshold = find_threshold(y, prob)
         per_fold = fold_scores(y, prob, folds, threshold)
-        print(f"{str(config):<106} macro F1 CV = {score:.4f} (per fold {per_fold.mean():.4f} ± {per_fold.std():.4f}, threshold {threshold})")
+        print(f"{str(config):<114} macro F1 CV = {score:.4f} (per fold {per_fold.mean():.4f} ± {per_fold.std():.4f}, threshold {threshold})")
 
         if best is None or score > best["score"]:
             best = {"score": score, "threshold": threshold, "config": config}
@@ -161,11 +162,13 @@ def main():
     print(f"sklearn dengan pengaturan yang sama: macro F1 CV = {sklearn_score:.4f} (per fold {sklearn_folds.mean():.4f} ± {sklearn_folds.std():.4f})")
 
     # Melatih ulang model final pakai seluruh train.csv.
+    print("\nMelatih model final pakai seluruh train.csv...", flush=True)
     features = InteractionFeatures().fit(train_df)
     X_full = features.transform(train_df)
     X_test = features.transform(test_df)
     model = make_model(best["config"]).fit(X_full, y)
     print(f"\nJumlah fitur model final: {X_full.shape[1]}")
+    print(f"Bobot yang bernilai nol: {np.sum(model.weights[1:] == 0)}")
 
     output_dir = ROOT / "output"
     output_dir.mkdir(exist_ok=True)
