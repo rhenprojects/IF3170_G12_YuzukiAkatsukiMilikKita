@@ -9,17 +9,13 @@ import numpy as np
 # L1 pada SGD (metode clipping: bobot dipotong di nol setelah update, bukan cumulative penalty):
 #   - Tsuruoka, Tsujii, Ananiadou (2009), Stochastic Gradient Descent Training for
 #     L1-regularized Log-linear Models with Cumulative Penalty, ACL-IJCNLP, bagian 3.1
-# Learning rate mengecil tiap epoch (exponential decay, eta = eta0 * decay^epoch):
+# Learning rate mengecil tiap epoch (exponential decay eta0 * alpha^(-k/N), di sini decay = 1/alpha dan k/N = epoch):
 #   - Tsuruoka, Tsujii, Ananiadou (2009), bagian 3.3
 # Optimizer AdaGrad (learning rate per bobot) dan L1 dengan langkah per bobot:
 #   - Duchi, Hazan, Singer (2011), Adaptive Subgradient Methods for Online Learning and
 #     Stochastic Optimization, Journal of Machine Learning Research 12(61), bagian 3 dan 5.1
-# Optimizer Adam (momentum dan rata-rata kuadrat gradien dengan koreksi bias):
-#   - Kingma, Ba (2015), Adam: A Method for Stochastic Optimization, ICLR, Algoritma 1 bagian 2
 
-# Nilai bawaan Adam dari paper, EPSILON juga dipakai AdaGrad biar gak bagi nol.
-BETA1 = 0.9
-BETA2 = 0.999
+# Mencegah AdaGrad bagi nol pas bobot belum pernah dapat gradien.
 EPSILON = 1e-8
 
 
@@ -28,8 +24,8 @@ class LogisticRegression:
     def __init__(self, learning_rate=0.01, n_epochs=100, penalty=None, reg_lambda=0.0, l1_ratio=0.5, lr_decay=1.0, optimizer="sga", history_every=0, random_state=42):
         if penalty not in (None, "l1", "l2", "elasticnet"):
             raise ValueError("penalty harus None, 'l1', 'l2', atau 'elasticnet'")
-        if optimizer not in ("sga", "adagrad", "adam"):
-            raise ValueError("optimizer harus 'sga', 'adagrad', atau 'adam'")
+        if optimizer not in ("sga", "adagrad"):
+            raise ValueError("optimizer harus 'sga' atau 'adagrad'")
 
         self.learning_rate = learning_rate
         self.n_epochs = n_epochs
@@ -91,22 +87,14 @@ class LogisticRegression:
         w = self.weights[1:]
         self.weights[1:] = np.sign(w) * np.maximum(np.abs(w) - step, 0)
 
-    # Menghitung besar langkah tiap bobot, sga sama rata, adagrad dan adam beda-beda per bobot.
-    def step_size(self, gradient, learning_rate, n_updates):
+    # Menghitung besar langkah tiap bobot, sga sama rata, adagrad makin kecil buat bobot yang sering dapat gradien.
+    def step_size(self, gradient, learning_rate):
         if self.optimizer == "adagrad":
-            self.second_moment += gradient ** 2
-            return learning_rate / (np.sqrt(self.second_moment) + EPSILON), gradient
+            self.squared_grad_sum += gradient ** 2
+            return learning_rate / (np.sqrt(self.squared_grad_sum) + EPSILON)
+        return np.full_like(self.weights, learning_rate)
 
-        if self.optimizer == "adam":
-            self.first_moment = BETA1 * self.first_moment + (1 - BETA1) * gradient
-            self.second_moment = BETA2 * self.second_moment + (1 - BETA2) * gradient ** 2
-            first = self.first_moment / (1 - BETA1 ** n_updates)
-            second = self.second_moment / (1 - BETA2 ** n_updates)
-            return learning_rate / (np.sqrt(second) + EPSILON), first
-
-        return np.full_like(self.weights, learning_rate), gradient
-
-    # Melatih pakai SGA kayak di slide (atau adagrad/adam), learning rate dikali lr_decay tiap epoch.
+    # Melatih pakai SGA kayak di slide (atau adagrad), learning rate dikali lr_decay tiap epoch.
     def fit(self, X, y):
         X = np.asarray(X, dtype=float)
         y = np.asarray(y, dtype=float)
@@ -116,8 +104,7 @@ class LogisticRegression:
         self.weights = np.zeros(n_features + 1)
         self.loss_history = []
         self.weights_history = [self.weights.copy()]
-        self.first_moment = np.zeros_like(self.weights)
-        self.second_moment = np.zeros_like(self.weights)
+        self.squared_grad_sum = np.zeros_like(self.weights)
         n_updates = 0
 
         l1 = self.penalty_strength()[0]
@@ -133,8 +120,8 @@ class LogisticRegression:
 
                 gradient = error * X_bias[row] - self.l2_gradient()
                 n_updates += 1
-                step, direction = self.step_size(gradient, learning_rate, n_updates)
-                self.weights += step * direction
+                step = self.step_size(gradient, learning_rate)
+                self.weights += step * gradient
 
                 if l1 > 0:
                     self.shrink_l1(step[1:] * l1)
