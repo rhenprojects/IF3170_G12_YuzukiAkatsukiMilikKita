@@ -17,9 +17,10 @@ class Node:
     
 
 class DecisionTree:
-    def __init__(self, criterion="entropy", max_depth=None):
+    def __init__(self, criterion="entropy", max_depth=None, min_sample_split=5):
         self.criterion = criterion
         self.max_depth = max_depth
+        self.min_sample_split = min_sample_split
         self.root = None
         self.column_names = None
         self.numeric_columns = None
@@ -162,9 +163,11 @@ class DecisionTree:
         if (
             len(labels) == 1
             or (self.max_depth is not None and depth >= self.max_depth)
+            or (len(y) < self.min_sample_split)
         ):
             return node
-                
+        
+        # Lakukan split pada pohon
         # Cari atribut terbaik
         node.attr_idx, node.threshold = self._find_best_attribute(X, y)
         if node.attr_idx == None:
