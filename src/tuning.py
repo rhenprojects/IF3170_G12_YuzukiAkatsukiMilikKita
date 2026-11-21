@@ -129,7 +129,177 @@ def kfold_scores(
     model, X, y, method=None, *, n_splits=5, shuffle=True,
     random_state=42, stratified=True, scoring="f1_macro", predict_mode="batch",
 ):
-    pass
+    _validate_data(X, y)
+
+    if method is not None and not callable(method):
+        raise TypeError("method harus None atau fungsi balancing(X_train, y_train)")
+    
+    if predict_mode not in ("batch", "single"):
+        raise ValueError("predict_mode harus 'batch' atau 'single'")
+    
+    if callable(scoring):
+        score_function = scoring
+    elif scoring == "f1_macro":
+        score_function = macro_f1_score
+    elif scoring == "accuracy":
+        score_function = accuracy_score
+    else:
+        raise ValueError("scoring harus 'f1_macro', 'accuracy', atau callable")
+    
+    scores = []
+    folds = kfold(
+        y,
+        n_splits=n_splits,
+        shuffle=shuffle,
+        random_state=random_state,
+        stratified=stratified,
+    )
+
+    for train_indices, valid_indices in folds:
+        # Pisahkan data berdasarkan posisi baris, bukan label indeks pandas.
+        X_train = _take(X, train_indices)
+        y_train = _take(y, train_indices)
+        X_valid = _take(X, valid_indices)
+        y_valid = _take(y, valid_indices)
+
+        # Balancing hanya dilakukan pada data training.
+        if method is not None:
+            X_train, y_train = method(X_train, y_train)
+            _validate_data(X_train, y_train)
+
+        # Gunakan model baru agar hasil training fold sebelumnya tidak terbawa.
+        fold_model = clone_model(model)
+        fold_model.fit(X_train, y_train)
+
+        if predict_mode == "single":
+            predictions = []
+            for row in np.asarray(X_valid):
+                prediction = fold_model.predict(row)
+                predictions.append(prediction)
+        else:
+            predictions = fold_model.predict(X_valid)
+
+        _validate_predictions(y_valid, predictions)
+        score = float(score_function(y_valid, predictions))
+        if not np.isfinite(score):
+            raise ValueError("Fungsi scoring harus menghasilkan skor finite")
+
+        scores.append(score)
+
+    return np.asarray(scores, dtype=float)
+
+
+def kfold(y, n_splits=5, shuffle=True, random_state=42, stratified=True):
+    labels = np.asarray(y)
+    if labels.ndim != 1 or len(labels) == 0 or pd.isna(labels).any():
+        raise ValueError("y harus vektor label yang tidak kosong dan tanpa NaN")
+    if (
+        isinstance(n_splits, bool)
+        or not isinstance(n_splits, Integral)
+        or not 2 <= n_splits <= len(labels)
+    ):
+        raise ValueError("n_splits harus integer diantara 2 dan jumlah sampel")
+
+    random_gen = np.random.default_rng(random_state)
+    folds = []
+    for fold_idx in range(n_splits):
+        folds.append([])
+
+    if stratified:
+        class_codes, classes = pd.factorize(labels, sort=False)
+        next_fold = 0
+
+        # Sebarkan sampel setiap kelas secara bergiliran ke seluruh fold
+        for class_idx in range(len(classes)):
+            class_indices = np.flatnonzero(class_codes == class_idx)
+            if len(class_indices) < n_splits:
+                raise ValueError("Setiap kelas perlu minimal n_splits sampel untuk stratified k-fold")
+            if shuffle:
+                random_gen.shuffle(class_indices)
+
+            for sample_idx in class_indices:
+                folds[next_fold].append(sample_idx)
+                next_fold = (next_fold + 1) % n_splits
+                
+    else:
+        indices = np.arange(len(labels))
+        if shuffle:
+            random_gen.shuffle(indices)
+        folds = np.array_split(indices, n_splits)
+    
+    # Satu fold menjadi data validasi, sisanya menjadi data training
+    all_indices = np.arange(len(labels))
+    for fold in folds:
+        valid_indices = np.sort(np.asarray(fold, dtype=int))
+        train_mask = np.ones(len(labels), dtype=bool)
+        train_mask[valid_indices] = False
+        train_indices = all_indices[train_mask]
+
+        yield train_indices, valid_indices
+
+def accuracy_score(y_true, y_pred):
+    y_true, y_pred = _validate_predictions(y_true, y_pred)
+    correct_predictions = np.sum(y_true == y_pred)
+    accuracy = correct_predictions / len(y_true)
+
+    return float(accuracy)
+
+def macro_f1_score(y_true, y_pred):
+    y_true, y_pred = _validate_predictions(y_true, y_pred)
+    labels = pd.unique(np.concatenate([y_true, y_pred]))
+    scores = []
+
+    for label in labels:
+        actual_class = y_true == label
+        predicted_class = y_pred == label
+
+        true_positive = np.sum(actual_class & predicted_class)
+        false_positive = np.sum(~actual_class & predicted_class)
+        false_negative = np.sum(actual_class & ~predicted_class)
+
+        denominator = 2 * true_positive + false_positive + false_negative
+        if denominator == 0:
+            score = 0.0
+        else:
+            score = 2 * true_positive / denominator
+
+        scores.append(score)
+
+    return float(np.mean(scores))
+
+def _validate_predictions(y_true, y_pred):
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred)
+
+    if (
+        y_true.ndim != 1
+        or y_pred.ndim != 1
+        or len(y_true) == 0
+        or len(y_true) != len(y_pred)
+    ):
+        raise ValueError("Label asli dan prediksi harus vektor dengan panjang sama, tidak kosong")
+    
+    if pd.isna(y_true).any() or pd.isna(y_pred).any():
+        raise ValueError("Label asli dan prediksi tidak boleh mengandung NaN")
+
+    return y_true, y_pred
+
+def _take(data, indices):
+    if isinstance(data, (pd.DataFrame, pd.Series)):
+        return data.iloc[indices].copy()
+    
+    return np.asarray(data)[indices].copy()
 
 def _validate_data(X, y):
-    pass
+    if np.ndim(X) != 2:
+        raise ValueError("X harus berbentuk dua dimensi (sampel, fitur)")
+    labels = np.asarray(y)
+    if (
+        labels.ndim != 1
+        or len(X) != len(labels)
+        or len(labels) == 0
+    ):
+        raise ValueError("y harus satu dimensi, tidak kosong, dan sepanjang X")
+    if pd.isna(labels).any():
+        raise ValueError("Label y tidak boleh kosong/NaN")
+    return labels
