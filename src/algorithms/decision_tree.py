@@ -133,7 +133,12 @@ class DecisionTree:
                     if not mask.any() or mask.all():
                         continue
                     
-                    score = self._gain_ratio(y_known, [y_known[mask], y_known[~mask]], y_missing)
+                    children = [y_known[mask], y_known[~mask]]
+                    # Tolak kandidat jika salah satu anak akan terlalu kecil
+                    if not self._validate_min_sample_leaf(children, y_missing):
+                        continue
+
+                    score = self._gain_ratio(y_known, children, y_missing)
                     if score is not None and score > best_score:
                         best_score = score
                         best_attr = attr_idx
@@ -148,6 +153,10 @@ class DecisionTree:
                     mask = values == value
                     children.append(y_known[mask])
                 
+                # Tolak kandidat jika salah satu anak akan terlalu kecil
+                if not self._validate_min_sample_leaf(children, y_missing):
+                    continue
+
                 score = self._gain_ratio(y_known, children, y_missing)
                 if score is not None and score > best_score:
                     best_score = score
@@ -192,8 +201,7 @@ class DecisionTree:
             else:
                 mask = np.zeros_like(missing)
             mask[known] = known_mask
-            if (len(y[mask]) >= self.min_sample_leaf):
-                node.children[branch] = self._build_tree(X[mask], y[mask], depth+1)
+            node.children[branch] = self._build_tree(X[mask], y[mask], depth+1)
 
         return node
         
@@ -216,3 +224,11 @@ class DecisionTree:
             node = next
             
         return node.prediction
+    
+    def _validate_min_sample_leaf(self, children: list[np.ndarray], y_missing: np.ndarray) -> bool:
+        child_counts = [len(child) for child in children]
+        # Missing masuk ke cabang terbesar.
+        largest_branch = np.argmax(child_counts)
+        child_counts[largest_branch] += len(y_missing)
+        
+        return all(size >= self.min_sample_leaf for size in child_counts)
