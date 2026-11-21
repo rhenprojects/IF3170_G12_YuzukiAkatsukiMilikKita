@@ -17,10 +17,11 @@ class Node:
     
 
 class DecisionTree:
-    def __init__(self, criterion="entropy", max_depth=None, min_sample_split=5):
+    def __init__(self, criterion="entropy", max_depth=None, min_sample_split=5, min_sample_leaf=3):
         self.criterion = criterion
         self.max_depth = max_depth
         self.min_sample_split = min_sample_split
+        self.min_sample_leaf = min_sample_leaf
         self.root = None
         self.column_names = None
         self.numeric_columns = None
@@ -191,7 +192,8 @@ class DecisionTree:
             else:
                 mask = np.zeros_like(missing)
             mask[known] = known_mask
-            node.children[branch] = self._build_tree(X[mask], y[mask], depth+1)
+            if (len(y[mask]) >= self.min_sample_leaf):
+                node.children[branch] = self._build_tree(X[mask], y[mask], depth+1)
 
         return node
         
