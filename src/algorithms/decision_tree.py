@@ -18,6 +18,7 @@ class Node:
     
 
 class DecisionTree:
+    """criterion = entropy | gain_ratio | gini"""
     def __init__(self, criterion="gain_ratio", max_depth=None, min_sample_split=5, min_sample_leaf=3, min_gain=0.0):
         self.criterion = criterion
         self.max_depth = max_depth
@@ -115,6 +116,44 @@ class DecisionTree:
             return None
         
         return gain / split_information
+    
+    def _calculate_gini(self, y: np.ndarray) -> float:
+        gini = 1
+        total_row = len(y)
+        _, counts = np.unique(y, return_counts=True)
+        for count in counts:
+            p = count/total_row
+            gini -= (pow(p, 2))
+        
+        return gini
+    
+    def _calculate_gini_diff(self, y_parent: np.ndarray, y_children: list[np.ndarray]) -> float:
+        gini_parent = self._calculate_gini(y_parent)
+        diff = gini_parent
+        
+        for y_child in y_children:
+            diff -= (len(y_child) / len(y_parent)) * self._calculate_gini(y_child)
+            
+        return diff
+    
+    def _calculate_score(self, y_known, children, y_missing) -> float | None:
+        if (self.criterion == "gain_ratio"):
+            score = self._gain_ratio(y_known, children, y_missing)
+            return score
+        
+        elif(self.criterion == "entropy"):
+            score = self._gain(y_known, children)
+        else:
+            score = self._calculate_gini_diff(y_known, children)
+        
+        score *= len(y_known) / (len(y_known) + len(y_missing))
+        if (
+            score < self.min_gain
+            and not np.isclose(score, self.min_gain, rtol=0, atol=1e-12)
+        ):
+            return None
+            
+        return score
         
     def _find_best_attribute(self, X: np.ndarray, y: np.ndarray):
         best_attr = None
@@ -146,10 +185,7 @@ class DecisionTree:
                     if not self._validate_min_sample_leaf(children, y_missing):
                         continue
 
-                    if (self.criterion == "entropy"):
-                        score = self._gain(y_known, children)
-                    else: #(self.criterion == "gain_ratio"):
-                        score = self._gain_ratio(y_known, children, y_missing)
+                    score = self._calculate_score(y_known, children, y_missing)
                         
                     if score is not None and score > best_score:
                         best_score = score
@@ -169,7 +205,8 @@ class DecisionTree:
                 if not self._validate_min_sample_leaf(children, y_missing):
                     continue
 
-                score = self._gain_ratio(y_known, children, y_missing)
+                score = self._calculate_score(y_known, children, y_missing)
+                                        
                 if score is not None and score > best_score:
                     best_score = score
                     best_attr = attr_idx
@@ -247,8 +284,8 @@ class DecisionTree:
 
     def _validate_parameters(self):
         # Validasi criterion
-        if self.criterion not in ("gain_ratio", "entropy"):
-            raise ValueError('criterion harus "gain_ratio" atau "entropy"')
+        if self.criterion not in ("gain_ratio", "entropy", "gini"):
+            raise ValueError('criterion harus "gain_ratio", "entropy", "gini"')
         
         # Validasi max dan min value
         for name, value, minimum in [
@@ -261,7 +298,6 @@ class DecisionTree:
             if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral) or value < minimum:
                 raise ValueError(f"{name} harus integer >= {minimum}" + (" atau None" if name == "max_depth" else ""))
             
-        #
         if (
             not isinstance(self.min_gain, Real)
             or self.min_gain < 0
