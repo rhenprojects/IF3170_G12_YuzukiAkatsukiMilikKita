@@ -2,6 +2,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.model_selection import StratifiedKFold, train_test_split
@@ -26,6 +27,10 @@ NUMERIC_FEATURES = [
 CATEGORICAL_FEATURES = ["meal_package", "room_category", "booking_channel"]
 BINARY_FEATURES = ["needs_parking", "is_returning_guest"]
 NB_BIN_FEATURES = ["days_before_arrival", "nightly_rate_idr"]
+# Memperlakukan bulan dan tahun sebagai kategori buat logistic regression, nilainya dikit dan polanya gak berurutan.
+LR_DATE_FEATURES = ["arrival_year", "arrival_month"]
+LR_BIN_FEATURES = [col for col in NUMERIC_FEATURES if col not in LR_DATE_FEATURES] + ["total_nights", "total_guests"]
+LR_ONE_HOT_FEATURES = CATEGORICAL_FEATURES + BINARY_FEATURES + LR_DATE_FEATURES
 
 
 def add_features(data):
@@ -94,11 +99,70 @@ def build_naive_bayes_pipeline(n_bins=12):
     return Pipeline([("imputer", build_imputer()), ("preprocessing", preprocessor)])
 
 
+# Referensi binning (basis piecewise constant) dan interaksi antarfitur (tensor product):
+#   - Hastie, Tibshirani, Friedman, The Elements of Statistical Learning ed. 2, subbab 5.2 dan 5.7
+# Membentuk fitur bin, one-hot, dan interaksi dua arah buat logistic regression, aturannya cuma dari data latih.
+class InteractionFeatures(TransformerMixin, BaseEstimator):
+    def __init__(self, n_bins=20):
+        self.n_bins = n_bins
+
+    def fit(self, data, y=None):
+        self.edges = {}
+        for col in LR_BIN_FEATURES:
+            self.edges[col] = np.unique(np.quantile(data[col], np.linspace(0, 1, self.n_bins + 1)[1:-1]))
+
+        self.categories = {}
+        for col in LR_ONE_HOT_FEATURES:
+            self.categories[col] = np.unique(data[col].to_numpy(dtype=object))
+
+        # Membuang interaksi yang isinya 0 terus, misalnya dua bin dari kolom yang sama.
+        base = self.one_hot(data)
+        self.keep = []
+        for i in range(base.shape[1] - 1):
+            pairs = base[:, [i]] * base[:, i + 1:]
+            self.keep.append(pairs.sum(axis=0) > 0)
+        return self
+
+    # Ngasih tahu Pipeline sklearn kalau langkah ini udah di-fit, soalnya atributnya gak pakai akhiran _.
+    def __sklearn_is_fitted__(self):
+        return hasattr(self, "keep")
+
+    def one_hot(self, data):
+        blocks = []
+        for col in LR_BIN_FEATURES:
+            bins = np.digitize(data[col].to_numpy(dtype=float), self.edges[col])
+            blocks.append(bins[:, None] == np.arange(len(self.edges[col]) + 1))
+        for col in LR_ONE_HOT_FEATURES:
+            values = data[col].to_numpy(dtype=object)
+            blocks.append(values[:, None] == self.categories[col])
+        return np.hstack(blocks).astype(float)
+
+    def transform(self, data):
+        base = self.one_hot(data)
+        columns = [base]
+        for i in range(base.shape[1] - 1):
+            pairs = base[:, [i]] * base[:, i + 1:]
+            columns.append(pairs[:, self.keep[i]])
+        return np.hstack(columns)
+
+
+# Gak pakai scaler soalnya semua kolom udah 0/1, standardisasi kolom yang jarang aktif malah bikin SGA meledak.
+def build_logistic_regression_pipeline(n_bins=20):
+    return Pipeline(
+        [
+            ("imputer", build_imputer()),
+            ("attribute_construction", FunctionTransformer(add_features)),
+            ("interaction", InteractionFeatures(n_bins=n_bins)),
+        ]
+    )
+
+
 def prepare_data(data_dir="data", seed=42, *, use_split=False, n_splits=5, track="scaled"):
     """Prepare the first stratified fold, or an 80:20 hold-out if use_split is true.
 
-    track="scaled" untuk KNN/SVM/Logistic Regression/DTL,
-    track="naive_bayes" untuk Naive Bayes.
+    track="scaled" untuk KNN/SVM/DTL,
+    track="naive_bayes" untuk Naive Bayes,
+    track="logistic_regression" untuk Logistic Regression.
     """
     data_dir = Path(data_dir)
     np.random.seed(seed)
@@ -123,6 +187,8 @@ def prepare_data(data_dir="data", seed=42, *, use_split=False, n_splits=5, track
 
     if track == "naive_bayes":
         preparation_pipeline = build_naive_bayes_pipeline()
+    elif track == "logistic_regression":
+        preparation_pipeline = build_logistic_regression_pipeline()
     else:
         preparation_pipeline = build_preparation_pipeline()
     X_train_prepared = preparation_pipeline.fit_transform(X_train)
