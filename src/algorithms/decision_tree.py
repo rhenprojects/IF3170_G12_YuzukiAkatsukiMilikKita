@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from numbers import Integral, Real
 from typing import Any
 
 import numpy as np
@@ -17,14 +18,20 @@ class Node:
     
 
 class DecisionTree:
-    def __init__(self, criterion="entropy", max_depth=None):
+    """criterion = entropy | gain_ratio | gini"""
+    def __init__(self, criterion="gain_ratio", max_depth=None, min_sample_split=5, min_sample_leaf=3, min_gain=0.0):
         self.criterion = criterion
         self.max_depth = max_depth
+        self.min_sample_split = min_sample_split
+        self.min_sample_leaf = min_sample_leaf
+        self.min_gain = min_gain
+        self._validate_parameters()
         self.root = None
         self.column_names = None
         self.numeric_columns = None
 
     def fit(self, X: pd.DataFrame, y: pd.Series):
+        self._validate_parameters()
         X_np = X.to_numpy()
         y_np = y.to_numpy()
         if (X_np.ndim != 2 or y_np.ndim != 1 or len(X_np) != len(y_np) or len(y) == 0):
@@ -100,11 +107,53 @@ class DecisionTree:
         if y_missing is not None and len(y_missing) > 0:
             gain *= len(y_parent) / (len(y_parent) + len(y_missing))
             split_groups = [*y_children, y_missing]
+        # Filter information gain sebelum membandingkan gain ratio
+        if gain < self.min_gain and not np.isclose(gain, self.min_gain, rtol=0, atol=1e-12):
+            return None
+        gain = max(0.0, gain)
         split_information = self._split_information(split_groups)
         if (split_information == 0):
             return None
         
         return gain / split_information
+    
+    def _calculate_gini(self, y: np.ndarray) -> float:
+        gini = 1
+        total_row = len(y)
+        _, counts = np.unique(y, return_counts=True)
+        for count in counts:
+            p = count/total_row
+            gini -= (pow(p, 2))
+        
+        return gini
+    
+    def _calculate_gini_diff(self, y_parent: np.ndarray, y_children: list[np.ndarray]) -> float:
+        gini_parent = self._calculate_gini(y_parent)
+        diff = gini_parent
+        
+        for y_child in y_children:
+            diff -= (len(y_child) / len(y_parent)) * self._calculate_gini(y_child)
+            
+        return diff
+    
+    def _calculate_score(self, y_known, children, y_missing) -> float | None:
+        if (self.criterion == "gain_ratio"):
+            score = self._gain_ratio(y_known, children, y_missing)
+            return score
+        
+        elif(self.criterion == "entropy"):
+            score = self._gain(y_known, children)
+        else:
+            score = self._calculate_gini_diff(y_known, children)
+        
+        score *= len(y_known) / (len(y_known) + len(y_missing))
+        if (
+            score < self.min_gain
+            and not np.isclose(score, self.min_gain, rtol=0, atol=1e-12)
+        ):
+            return None
+            
+        return score
         
     def _find_best_attribute(self, X: np.ndarray, y: np.ndarray):
         best_attr = None
@@ -131,7 +180,13 @@ class DecisionTree:
                     if not mask.any() or mask.all():
                         continue
                     
-                    score = self._gain_ratio(y_known, [y_known[mask], y_known[~mask]], y_missing)
+                    children = [y_known[mask], y_known[~mask]]
+                    # Tolak kandidat jika salah satu anak akan terlalu kecil
+                    if not self._validate_min_sample_leaf(children, y_missing):
+                        continue
+
+                    score = self._calculate_score(y_known, children, y_missing)
+                        
                     if score is not None and score > best_score:
                         best_score = score
                         best_attr = attr_idx
@@ -146,7 +201,12 @@ class DecisionTree:
                     mask = values == value
                     children.append(y_known[mask])
                 
-                score = self._gain_ratio(y_known, children, y_missing)
+                # Tolak kandidat jika salah satu anak akan terlalu kecil
+                if not self._validate_min_sample_leaf(children, y_missing):
+                    continue
+
+                score = self._calculate_score(y_known, children, y_missing)
+                                        
                 if score is not None and score > best_score:
                     best_score = score
                     best_attr = attr_idx
@@ -162,9 +222,11 @@ class DecisionTree:
         if (
             len(labels) == 1
             or (self.max_depth is not None and depth >= self.max_depth)
+            or (len(y) < self.min_sample_split)
         ):
             return node
-                
+        
+        # Lakukan split pada pohon
         # Cari atribut terbaik
         node.attr_idx, node.threshold = self._find_best_attribute(X, y)
         if node.attr_idx == None:
@@ -211,3 +273,33 @@ class DecisionTree:
             node = next
             
         return node.prediction
+    
+    def _validate_min_sample_leaf(self, children: list[np.ndarray], y_missing: np.ndarray) -> bool:
+        child_counts = [len(child) for child in children]
+        # Missing masuk ke cabang terbesar.
+        largest_branch = np.argmax(child_counts)
+        child_counts[largest_branch] += len(y_missing)
+        
+        return all(size >= self.min_sample_leaf for size in child_counts)
+
+    def _validate_parameters(self):
+        # Validasi criterion
+        if self.criterion not in ("gain_ratio", "entropy", "gini"):
+            raise ValueError('criterion harus "gain_ratio", "entropy", "gini"')
+        
+        # Validasi max dan min value
+        for name, value, minimum in [
+            ("max_depth", self.max_depth, 0),
+            ("min_sample_split", self.min_sample_split, 2),
+            ("min_sample_leaf", self.min_sample_leaf, 1),
+        ]:
+            if name == "max_depth" and value is None:
+                continue
+            if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral) or value < minimum:
+                raise ValueError(f"{name} harus integer >= {minimum}" + (" atau None" if name == "max_depth" else ""))
+            
+        if (
+            not isinstance(self.min_gain, Real)
+            or self.min_gain < 0
+        ):
+            raise ValueError("min_gain harus angka >= 0")
