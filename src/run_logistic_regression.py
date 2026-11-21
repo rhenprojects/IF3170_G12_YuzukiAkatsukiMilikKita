@@ -20,12 +20,13 @@ MODEL_PATH = OUTPUT_DIR / "logistic_regression.pkl"
 SUBMISSION_PATH = OUTPUT_DIR / "submission_logistic_regression.csv"
 SEED = 42
 
-# Membandingkan SGA dari slide dengan dua optimizer adaptif, tiap grid udah yang terbaik dari eksperimen yang lebih besar.
+# Membandingkan L1, L2, dan Elastic Net di SGA, lalu AdaGrad yang cukup 5 epoch soalnya loss-nya udah nyamain SGA 10 epoch.
 GRIDS = [
-    {"optimizer": ["sga"], "learning_rate": [0.01], "lr_decay": [0.7], "penalty": ["l2"], "reg_lambda": [0.0003]},
-    {"optimizer": ["adagrad"], "learning_rate": [0.03], "penalty": ["l2"], "reg_lambda": [0.0003]},
-    {"optimizer": ["adagrad"], "learning_rate": [0.05], "penalty": ["l1"], "reg_lambda": [0.0001]},
-    {"optimizer": ["adam"], "learning_rate": [0.001], "lr_decay": [0.7], "penalty": ["l2"], "reg_lambda": [0.0003]},
+    {"optimizer": ["sga"], "n_epochs": [10], "learning_rate": [0.01], "lr_decay": [0.7], "penalty": ["l2"], "reg_lambda": [0.0003]},
+    {"optimizer": ["sga"], "n_epochs": [10], "learning_rate": [0.01], "lr_decay": [0.7], "penalty": ["l1"], "reg_lambda": [0.0001]},
+    {"optimizer": ["sga"], "n_epochs": [10], "learning_rate": [0.01], "lr_decay": [0.7], "penalty": ["elasticnet"], "reg_lambda": [0.0003], "l1_ratio": [0.2]},
+    {"optimizer": ["adagrad"], "n_epochs": [5], "learning_rate": [0.05], "penalty": ["l2"], "reg_lambda": [0.0003]},
+    {"optimizer": ["adagrad"], "n_epochs": [5], "learning_rate": [0.05], "penalty": ["l1"], "reg_lambda": [0.0001]},
 ]
 
 
@@ -59,16 +60,16 @@ def main():
 
     # 2. Tuning
     print(f"Mencoba {len(GRIDS)} konfigurasi dengan 5-fold CV di data latih, bisa makan beberapa menit...", flush=True)
-    base_model = LogisticRegression(n_epochs=10, random_state=SEED)
+    base_model = LogisticRegression(random_state=SEED)
     results = pd.concat([tune(base_model, grid, X_train, y_train, random_state=SEED) for grid in GRIDS])
     results = results.sort_values("kfold_mean", ascending=False, ignore_index=True)
     for _, row in results.iterrows():
-        print(f"{str(row['params']):<104} macro F1 CV = {row['kfold_mean']:.4f} ± {row['kfold_std']:.4f}")
+        print(f"{str(row['params']):<136} macro F1 CV = {row['kfold_mean']:.4f} ± {row['kfold_std']:.4f}")
     best_params = results.loc[0, "params"]
     print("\nModel terbaik:", best_params)
 
     # 3. Train dan cari threshold di data validasi
-    model = LogisticRegression(n_epochs=10, random_state=SEED, **best_params).fit(X_train, y_train)
+    model = LogisticRegression(random_state=SEED, **best_params).fit(X_train, y_train)
     valid_score, threshold = find_threshold(y_valid, model.predict_proba(X_valid))
     print(f"Macro F1 (validasi): {valid_score:.4f} di threshold {threshold}")
 
@@ -84,7 +85,7 @@ def main():
     pipeline = build_logistic_regression_pipeline()
     X_full = pipeline.fit_transform(train_df[columns])
     X_test = pipeline.transform(test_df[columns])
-    model = LogisticRegression(n_epochs=10, random_state=SEED, **best_params).fit(X_full, train_df["is_canceled"])
+    model = LogisticRegression(random_state=SEED, **best_params).fit(X_full, train_df["is_canceled"])
     print("Jumlah fitur model final:", X_full.shape[1])
     print("Bobot yang bernilai nol:", np.sum(model.weights[1:] == 0))
 
