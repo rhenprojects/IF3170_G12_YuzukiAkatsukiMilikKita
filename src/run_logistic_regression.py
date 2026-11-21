@@ -7,6 +7,7 @@ from sklearn.model_selection import StratifiedKFold
 
 from algorithms.logistic_regression import LogisticRegression
 from model_io import load_model, save_model
+from preprocessing import BINARY_FEATURES, CATEGORICAL_FEATURES, NUMERIC_FEATURES, add_features, build_imputer
 
 # Referensi
 # Binning fitur angka (basis piecewise constant) dan interaksi antarfitur (tensor product):
@@ -17,8 +18,6 @@ from model_io import load_model, save_model
 ROOT = Path(__file__).resolve().parent.parent
 SEED = 42
 
-CATEGORICAL = ["meal_package", "room_category", "booking_channel", "needs_parking",
-               "is_returning_guest", "arrival_month", "arrival_year"]
 N_BINS = 10
 
 CONFIGS = [
@@ -29,30 +28,26 @@ CONFIGS = [
     {"penalty": "elasticnet", "reg_lambda": 0.001, "l1_ratio": 0.5},
 ]
 
-
-def add_columns(data):
-    data = data.drop(columns=["id", "is_canceled"], errors="ignore").copy()
-    data["total_nights"] = data["weekend_nights"] + data["weekday_nights"]
-    data["total_guests"] = data["num_adults"] + data["num_children"]
-    return data
+SELECTED_FEATURES = NUMERIC_FEATURES + CATEGORICAL_FEATURES + BINARY_FEATURES
+# Memperlakukan bulan dan tahun kedatangan sebagai kategori karena nilainya sedikit dan polanya tidak berurutan
+DATE_FEATURES = ["arrival_year", "arrival_month"]
+BIN_FEATURES = [col for col in NUMERIC_FEATURES if col not in DATE_FEATURES] + ["total_nights", "total_guests"]
+ONE_HOT_FEATURES = CATEGORICAL_FEATURES + BINARY_FEATURES + DATE_FEATURES
 
 
 # Membentuk fitur bin, one-hot, dan interaksi dua arah, semua aturan dipelajari dari data latih saja
 class InteractionFeatures:
     def fit(self, data):
-        data = add_columns(data)
-        self.numeric = [col for col in data.columns if col not in CATEGORICAL]
-        self.medians = data[self.numeric].median()
-        self.modes = data[CATEGORICAL].mode().iloc[0]
+        self.imputer = build_imputer().fit(data[SELECTED_FEATURES])
+        data = self.clean(data)
 
         self.edges = {}
-        for col in self.numeric:
-            values = data[col].fillna(self.medians[col])
-            self.edges[col] = np.unique(np.quantile(values, np.linspace(0, 1, N_BINS + 1)[1:-1]))
+        for col in BIN_FEATURES:
+            self.edges[col] = np.unique(np.quantile(data[col], np.linspace(0, 1, N_BINS + 1)[1:-1]))
 
         self.categories = {}
-        for col in CATEGORICAL:
-            self.categories[col] = np.unique(data[col].fillna(self.modes[col]).to_numpy(dtype=object))
+        for col in ONE_HOT_FEATURES:
+            self.categories[col] = np.unique(data[col].to_numpy(dtype=object))
 
         # Membuang interaksi yang selalu 0 di data latih, misalnya dua bin dari kolom yang sama
         base = self.one_hot(data)
@@ -62,19 +57,21 @@ class InteractionFeatures:
             self.keep.append(pairs.sum(axis=0) > 0)
         return self
 
+    def clean(self, data):
+        return add_features(self.imputer.transform(data[SELECTED_FEATURES]))
+
     def one_hot(self, data):
         blocks = []
-        for col in self.numeric:
-            values = data[col].fillna(self.medians[col]).to_numpy()
-            bins = np.digitize(values, self.edges[col])
+        for col in BIN_FEATURES:
+            bins = np.digitize(data[col].to_numpy(dtype=float), self.edges[col])
             blocks.append(bins[:, None] == np.arange(len(self.edges[col]) + 1))
-        for col in CATEGORICAL:
-            values = data[col].fillna(self.modes[col]).to_numpy(dtype=object)
+        for col in ONE_HOT_FEATURES:
+            values = data[col].to_numpy(dtype=object)
             blocks.append(values[:, None] == self.categories[col])
         return np.hstack(blocks).astype(float)
 
     def transform(self, data):
-        base = self.one_hot(add_columns(data))
+        base = self.one_hot(self.clean(data))
         columns = [base]
         for i in range(base.shape[1] - 1):
             pairs = base[:, [i]] * base[:, i + 1:]
