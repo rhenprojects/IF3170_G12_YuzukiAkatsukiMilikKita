@@ -14,14 +14,15 @@ import numpy as np
 
 
 class LogisticRegression:
-    # Menyimpan bias di weights[0] dan bobot fitur di weights[1:]
-    def __init__(self, learning_rate=0.01, n_epochs=100, penalty=None, reg_lambda=0.0, l1_ratio=0.5, lr_decay=1.0, random_state=42):
+    # Menaruh bias di weights[0], sisanya bobot tiap fitur.
+    def __init__(self, learning_rate=0.01, n_epochs=100, penalty=None, reg_lambda=0.0, l1_ratio=0.5, lr_decay=1.0, history_every=0, random_state=42):
         if penalty not in (None, "l1", "l2", "elasticnet"):
             raise ValueError("penalty harus None, 'l1', 'l2', atau 'elasticnet'")
 
         self.learning_rate = learning_rate
         self.n_epochs = n_epochs
         self.lr_decay = lr_decay
+        self.history_every = history_every
         self.random_state = random_state
 
         self.penalty = penalty
@@ -30,8 +31,9 @@ class LogisticRegression:
 
         self.weights = None
         self.loss_history = []
+        self.weights_history = []
 
-    # Membatasi skor agar np.exp tidak overflow
+    # Membatasi skor biar np.exp gak overflow.
     def sigmoid(self, score):
         score = np.clip(score, -500, 500)
         return 1 / (1 + np.exp(-score))
@@ -40,7 +42,7 @@ class LogisticRegression:
         ones = np.ones((X.shape[0], 1))
         return np.hstack([ones, X])
 
-    # Membagi reg_lambda menjadi kekuatan L1 dan L2 sesuai jenis penalti dan l1_ratio
+    # Memecah reg_lambda jadi porsi L1 dan L2, elasticnet dibagi pakai l1_ratio.
     def penalty_strength(self):
         if self.penalty == "l1":
             return self.reg_lambda, 0.0
@@ -62,7 +64,7 @@ class LogisticRegression:
 
         return loss
 
-    # Menghitung turunan penalti L2 tanpa menyertakan bias
+    # Menghitung turunan L2 tanpa bias, soalnya bias gak ikut dipenalti.
     def l2_gradient(self):
         l2 = self.penalty_strength()[1]
 
@@ -71,12 +73,12 @@ class LogisticRegression:
 
         return grad
 
-    # Mengecilkan bobot sebesar step untuk L1, bobot yang melewati nol berhenti di nol
+    # Mengecilkan bobot buat L1, kalau udah lewat nol langsung dipatok di nol.
     def shrink_l1(self, step):
         w = self.weights[1:]
         self.weights[1:] = np.sign(w) * np.maximum(np.abs(w) - step, 0)
 
-    # Melatih bobot dengan stochastic gradient ascent, learning rate dikali lr_decay tiap epoch
+    # Melatih pakai SGA kayak di slide, learning rate dikali lr_decay tiap epoch.
     def fit(self, X, y):
         X = np.asarray(X, dtype=float)
         y = np.asarray(y, dtype=float)
@@ -85,6 +87,8 @@ class LogisticRegression:
         X_bias = self.add_bias_column(X)
         self.weights = np.zeros(n_features + 1)
         self.loss_history = []
+        self.weights_history = [self.weights.copy()]
+        n_updates = 0
 
         l1 = self.penalty_strength()[0]
         random_gen = np.random.default_rng(self.random_state)
@@ -102,6 +106,11 @@ class LogisticRegression:
 
                 if l1 > 0:
                     self.shrink_l1(learning_rate * l1)
+
+                # Mencatat posisi bobot tiap history_every update, kepake buat video lintasan.
+                n_updates += 1
+                if self.history_every > 0 and n_updates % self.history_every == 0:
+                    self.weights_history.append(self.weights.copy())
 
             self.loss_history.append(self.log_loss(X_bias, y))
 
