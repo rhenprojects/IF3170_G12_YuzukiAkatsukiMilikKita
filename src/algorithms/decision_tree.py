@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from numbers import Integral, Real
 from typing import Any
 
 import numpy as np
@@ -17,16 +18,19 @@ class Node:
     
 
 class DecisionTree:
-    def __init__(self, criterion="entropy", max_depth=None, min_sample_split=5, min_sample_leaf=3):
+    def __init__(self, criterion="gain_ratio", max_depth=None, min_sample_split=5, min_sample_leaf=3, min_gain=0.0):
         self.criterion = criterion
         self.max_depth = max_depth
         self.min_sample_split = min_sample_split
         self.min_sample_leaf = min_sample_leaf
+        self.min_gain = min_gain
+        self._validate_parameters()
         self.root = None
         self.column_names = None
         self.numeric_columns = None
 
     def fit(self, X: pd.DataFrame, y: pd.Series):
+        self._validate_parameters()
         X_np = X.to_numpy()
         y_np = y.to_numpy()
         if (X_np.ndim != 2 or y_np.ndim != 1 or len(X_np) != len(y_np) or len(y) == 0):
@@ -102,6 +106,10 @@ class DecisionTree:
         if y_missing is not None and len(y_missing) > 0:
             gain *= len(y_parent) / (len(y_parent) + len(y_missing))
             split_groups = [*y_children, y_missing]
+        # Filter information gain sebelum membandingkan gain ratio
+        if gain < self.min_gain and not np.isclose(gain, self.min_gain, rtol=0, atol=1e-12):
+            return None
+        gain = max(0.0, gain)
         split_information = self._split_information(split_groups)
         if (split_information == 0):
             return None
@@ -232,3 +240,26 @@ class DecisionTree:
         child_counts[largest_branch] += len(y_missing)
         
         return all(size >= self.min_sample_leaf for size in child_counts)
+
+    def _validate_parameters(self):
+        # Validasi criterion
+        if self.criterion not in ("gain_ratio", "entropy"):
+            raise ValueError('criterion harus "gain_ratio" atau "entropy"')
+        
+        # Validasi max dan min value
+        for name, value, minimum in [
+            ("max_depth", self.max_depth, 0),
+            ("min_sample_split", self.min_sample_split, 2),
+            ("min_sample_leaf", self.min_sample_leaf, 1),
+        ]:
+            if name == "max_depth" and value is None:
+                continue
+            if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral) or value < minimum:
+                raise ValueError(f"{name} harus integer >= {minimum}" + (" atau None" if name == "max_depth" else ""))
+            
+        #
+        if (
+            not isinstance(self.min_gain, Real)
+            or self.min_gain < 0
+        ):
+            raise ValueError("min_gain harus angka >= 0")
