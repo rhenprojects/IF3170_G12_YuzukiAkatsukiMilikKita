@@ -146,7 +146,11 @@ class DecisionTree:
                     if not self._validate_min_sample_leaf(children, y_missing):
                         continue
 
-                    score = self._gain_ratio(y_known, children, y_missing)
+                    if (self.criterion == "entropy"):
+                        score = self._gain(y_known, children)
+                    else: #(self.criterion == "gain_ratio"):
+                        score = self._gain_ratio(y_known, children, y_missing)
+                        
                     if score is not None and score > best_score:
                         best_score = score
                         best_attr = attr_idx
