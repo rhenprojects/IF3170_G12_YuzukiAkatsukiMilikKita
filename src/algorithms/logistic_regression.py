@@ -11,17 +11,31 @@ import numpy as np
 #     L1-regularized Log-linear Models with Cumulative Penalty, ACL-IJCNLP, bagian 3.1
 # Learning rate mengecil tiap epoch (exponential decay, eta = eta0 * decay^epoch):
 #   - Tsuruoka, Tsujii, Ananiadou (2009), bagian 3.3
+# Optimizer AdaGrad (learning rate per bobot) dan L1 dengan langkah per bobot:
+#   - Duchi, Hazan, Singer (2011), Adaptive Subgradient Methods for Online Learning and
+#     Stochastic Optimization, Journal of Machine Learning Research 12(61), bagian 3 dan 5.1
+# Optimizer Adam (momentum dan rata-rata kuadrat gradien dengan koreksi bias):
+#   - Kingma, Ba (2015), Adam: A Method for Stochastic Optimization, ICLR, Algoritma 1 bagian 2
+
+# Nilai bawaan Adam dari paper, EPSILON juga dipakai AdaGrad biar gak bagi nol.
+BETA1 = 0.9
+BETA2 = 0.999
+EPSILON = 1e-8
 
 
 class LogisticRegression:
-    # Menyimpan bias di weights[0] dan bobot fitur di weights[1:]
-    def __init__(self, learning_rate=0.01, n_epochs=100, penalty=None, reg_lambda=0.0, l1_ratio=0.5, lr_decay=1.0, random_state=42):
+    # Menaruh bias di weights[0], sisanya bobot tiap fitur.
+    def __init__(self, learning_rate=0.01, n_epochs=100, penalty=None, reg_lambda=0.0, l1_ratio=0.5, lr_decay=1.0, optimizer="sga", history_every=0, random_state=42):
         if penalty not in (None, "l1", "l2", "elasticnet"):
             raise ValueError("penalty harus None, 'l1', 'l2', atau 'elasticnet'")
+        if optimizer not in ("sga", "adagrad", "adam"):
+            raise ValueError("optimizer harus 'sga', 'adagrad', atau 'adam'")
 
         self.learning_rate = learning_rate
         self.n_epochs = n_epochs
         self.lr_decay = lr_decay
+        self.optimizer = optimizer
+        self.history_every = history_every
         self.random_state = random_state
 
         self.penalty = penalty
@@ -30,8 +44,9 @@ class LogisticRegression:
 
         self.weights = None
         self.loss_history = []
+        self.weights_history = []
 
-    # Membatasi skor agar np.exp tidak overflow
+    # Membatasi skor biar np.exp gak overflow.
     def sigmoid(self, score):
         score = np.clip(score, -500, 500)
         return 1 / (1 + np.exp(-score))
@@ -40,7 +55,7 @@ class LogisticRegression:
         ones = np.ones((X.shape[0], 1))
         return np.hstack([ones, X])
 
-    # Membagi reg_lambda menjadi kekuatan L1 dan L2 sesuai jenis penalti dan l1_ratio
+    # Memecah reg_lambda jadi porsi L1 dan L2, elasticnet dibagi pakai l1_ratio.
     def penalty_strength(self):
         if self.penalty == "l1":
             return self.reg_lambda, 0.0
@@ -62,7 +77,7 @@ class LogisticRegression:
 
         return loss
 
-    # Menghitung turunan penalti L2 tanpa menyertakan bias
+    # Menghitung turunan L2 tanpa bias, soalnya bias gak ikut dipenalti.
     def l2_gradient(self):
         l2 = self.penalty_strength()[1]
 
@@ -71,12 +86,27 @@ class LogisticRegression:
 
         return grad
 
-    # Mengecilkan bobot sebesar step untuk L1, bobot yang melewati nol berhenti di nol
+    # Mengecilkan bobot buat L1, kalau udah lewat nol langsung dipatok di nol.
     def shrink_l1(self, step):
         w = self.weights[1:]
         self.weights[1:] = np.sign(w) * np.maximum(np.abs(w) - step, 0)
 
-    # Melatih bobot dengan stochastic gradient ascent, learning rate dikali lr_decay tiap epoch
+    # Menghitung besar langkah tiap bobot, sga sama rata, adagrad dan adam beda-beda per bobot.
+    def step_size(self, gradient, learning_rate, n_updates):
+        if self.optimizer == "adagrad":
+            self.second_moment += gradient ** 2
+            return learning_rate / (np.sqrt(self.second_moment) + EPSILON), gradient
+
+        if self.optimizer == "adam":
+            self.first_moment = BETA1 * self.first_moment + (1 - BETA1) * gradient
+            self.second_moment = BETA2 * self.second_moment + (1 - BETA2) * gradient ** 2
+            first = self.first_moment / (1 - BETA1 ** n_updates)
+            second = self.second_moment / (1 - BETA2 ** n_updates)
+            return learning_rate / (np.sqrt(second) + EPSILON), first
+
+        return np.full_like(self.weights, learning_rate), gradient
+
+    # Melatih pakai SGA kayak di slide (atau adagrad/adam), learning rate dikali lr_decay tiap epoch.
     def fit(self, X, y):
         X = np.asarray(X, dtype=float)
         y = np.asarray(y, dtype=float)
@@ -85,6 +115,10 @@ class LogisticRegression:
         X_bias = self.add_bias_column(X)
         self.weights = np.zeros(n_features + 1)
         self.loss_history = []
+        self.weights_history = [self.weights.copy()]
+        self.first_moment = np.zeros_like(self.weights)
+        self.second_moment = np.zeros_like(self.weights)
+        n_updates = 0
 
         l1 = self.penalty_strength()[0]
         random_gen = np.random.default_rng(self.random_state)
@@ -98,10 +132,16 @@ class LogisticRegression:
                 error = y[row] - prob
 
                 gradient = error * X_bias[row] - self.l2_gradient()
-                self.weights += learning_rate * gradient
+                n_updates += 1
+                step, direction = self.step_size(gradient, learning_rate, n_updates)
+                self.weights += step * direction
 
                 if l1 > 0:
-                    self.shrink_l1(learning_rate * l1)
+                    self.shrink_l1(step[1:] * l1)
+
+                # Mencatat posisi bobot tiap history_every update, kepake buat video lintasan.
+                if self.history_every > 0 and n_updates % self.history_every == 0:
+                    self.weights_history.append(self.weights.copy())
 
             self.loss_history.append(self.log_loss(X_bias, y))
 

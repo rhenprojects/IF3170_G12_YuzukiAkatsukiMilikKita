@@ -18,24 +18,24 @@ from preprocessing import BINARY_FEATURES, CATEGORICAL_FEATURES, NUMERIC_FEATURE
 ROOT = Path(__file__).resolve().parent.parent
 SEED = 42
 
-N_BINS = 10
+N_BINS = 20
 
+# Membandingkan SGA dari slide dengan dua optimizer adaptif, tiap konfigurasi udah yang terbaik dari grid yang lebih besar.
 CONFIGS = [
-    {"penalty": "l2", "reg_lambda": 0.0003},
-    {"penalty": "l2", "reg_lambda": 0.001},
-    {"penalty": "l2", "reg_lambda": 0.003},
-    {"penalty": "l1", "reg_lambda": 0.0003},
-    {"penalty": "elasticnet", "reg_lambda": 0.001, "l1_ratio": 0.5},
+    {"optimizer": "sga", "learning_rate": 0.01, "lr_decay": 0.7, "penalty": "l2", "reg_lambda": 0.0003},
+    {"optimizer": "adagrad", "learning_rate": 0.03, "penalty": "l2", "reg_lambda": 0.0003},
+    {"optimizer": "adagrad", "learning_rate": 0.05, "penalty": "l1", "reg_lambda": 0.0001},
+    {"optimizer": "adam", "learning_rate": 0.001, "lr_decay": 0.7, "penalty": "l2", "reg_lambda": 0.0003},
 ]
 
 SELECTED_FEATURES = NUMERIC_FEATURES + CATEGORICAL_FEATURES + BINARY_FEATURES
-# Memperlakukan bulan dan tahun kedatangan sebagai kategori karena nilainya sedikit dan polanya tidak berurutan
+# Memperlakukan bulan dan tahun sebagai kategori, nilainya dikit dan polanya gak berurutan.
 DATE_FEATURES = ["arrival_year", "arrival_month"]
 BIN_FEATURES = [col for col in NUMERIC_FEATURES if col not in DATE_FEATURES] + ["total_nights", "total_guests"]
 ONE_HOT_FEATURES = CATEGORICAL_FEATURES + BINARY_FEATURES + DATE_FEATURES
 
 
-# Membentuk fitur bin, one-hot, dan interaksi dua arah, semua aturan dipelajari dari data latih saja
+# Membentuk fitur bin, one-hot, dan interaksi dua arah, semua aturannya cuma dari data latih.
 class InteractionFeatures:
     def fit(self, data):
         self.imputer = build_imputer().fit(data[SELECTED_FEATURES])
@@ -49,7 +49,7 @@ class InteractionFeatures:
         for col in ONE_HOT_FEATURES:
             self.categories[col] = np.unique(data[col].to_numpy(dtype=object))
 
-        # Membuang interaksi yang selalu 0 di data latih, misalnya dua bin dari kolom yang sama
+        # Membuang interaksi yang isinya 0 terus, misalnya dua bin dari kolom yang sama.
         base = self.one_hot(data)
         self.keep = []
         for i in range(base.shape[1] - 1):
@@ -98,30 +98,39 @@ def find_threshold(y_true, prob):
     return best_score, best_threshold
 
 
+# Menghitung macro F1 tiap fold di threshold yang sama, buat ngeliat skornya stabil atau nggak.
+def fold_scores(y_true, prob, folds, threshold):
+    return np.array([macro_f1(y_true[valid_idx], (prob[valid_idx] >= threshold).astype(int)) for _, valid_idx in folds])
+
+
 def make_model(config):
-    return LogisticRegression(learning_rate=0.005, n_epochs=10, lr_decay=0.8, random_state=SEED, **config)
+    return LogisticRegression(n_epochs=10, random_state=SEED, **config)
 
 
-# Menyetarakan C sklearn dengan reg_lambda, C = 1 / (reg_lambda * n) karena sklearn menjumlahkan loss
+# Menyamakan C sklearn sama reg_lambda, C = 1 / (reg_lambda * n) soalnya sklearn ngejumlahin loss.
 def make_sklearn_model(config, n_samples):
     l1_ratio = {"l2": 0.0, "l1": 1.0, "elasticnet": config.get("l1_ratio")}[config["penalty"]]
     C = 1 / (config["reg_lambda"] * n_samples)
-    solver = "lbfgs" if l1_ratio == 0 else "saga"
+    # Memakai liblinear buat L1 soalnya saga lambat banget di ribuan fitur, saga cuma buat elasticnet.
+    solver = {0.0: "lbfgs", 1.0: "liblinear"}.get(l1_ratio, "saga")
     return SklearnLogisticRegression(C=C, l1_ratio=l1_ratio, solver=solver, max_iter=1000)
 
 
-# Menghitung peluang out-of-fold, tiap baris diprediksi model yang tidak dilatih dengan baris itu
-def cross_val_prob(data, y, folds, make):
-    prob = np.zeros(len(y))
-    for train_idx, valid_idx in folds:
+# Menghitung peluang out-of-fold, tiap baris ditebak model yang gak pernah liat baris itu.
+# Fitur dibentuk sekali per fold lalu dipakai semua model, soalnya bagian ini yang paling makan waktu.
+def cross_val_prob(data, y, folds, makers):
+    prob = np.zeros((len(makers), len(y)))
+    for k, (train_idx, valid_idx) in enumerate(folds, start=1):
         features = InteractionFeatures().fit(data.iloc[train_idx])
         X_train = features.transform(data.iloc[train_idx])
         X_valid = features.transform(data.iloc[valid_idx])
-        model = make(len(train_idx)).fit(X_train, y[train_idx])
 
-        # Menyamakan keluaran model sendiri (1 kolom) dengan sklearn (2 kolom)
-        valid_prob = model.predict_proba(X_valid)
-        prob[valid_idx] = valid_prob if valid_prob.ndim == 1 else valid_prob[:, 1]
+        for i, make in enumerate(makers):
+            model = make(len(train_idx)).fit(X_train, y[train_idx])
+            # Menyamakan output model sendiri (1 kolom) sama sklearn (2 kolom).
+            valid_prob = model.predict_proba(X_valid)
+            prob[i, valid_idx] = valid_prob if valid_prob.ndim == 1 else valid_prob[:, 1]
+        print(f"  fold {k}/{len(folds)} selesai", flush=True)
     return prob
 
 
@@ -132,27 +141,34 @@ def main():
 
     folds = list(StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED).split(train_df, y))
 
+    print(f"Mencoba {len(CONFIGS)} konfigurasi dengan 5-fold CV, tiap fold bisa makan beberapa menit...", flush=True)
+    makers = [lambda n, config=config: make_model(config) for config in CONFIGS]
+    probs = cross_val_prob(train_df, y, folds, makers)
+
     best = None
-    for config in CONFIGS:
-        prob = cross_val_prob(train_df, y, folds, lambda n, config=config: make_model(config))
+    for config, prob in zip(CONFIGS, probs):
         score, threshold = find_threshold(y, prob)
-        print(f"{str(config):<62} macro F1 CV = {score:.4f} (threshold {threshold})")
+        per_fold = fold_scores(y, prob, folds, threshold)
+        print(f"{str(config):<114} macro F1 CV = {score:.4f} (per fold {per_fold.mean():.4f} ± {per_fold.std():.4f}, threshold {threshold})")
 
         if best is None or score > best["score"]:
             best = {"score": score, "threshold": threshold, "config": config}
 
     print(f"\nModel terbaik: {best['config']}, threshold {best['threshold']}, macro F1 CV = {best['score']:.4f}")
 
-    sklearn_prob = cross_val_prob(train_df, y, folds, lambda n: make_sklearn_model(best["config"], n))
+    sklearn_prob = cross_val_prob(train_df, y, folds, [lambda n: make_sklearn_model(best["config"], n)])[0]
     sklearn_score = macro_f1(y, (sklearn_prob >= best["threshold"]).astype(int))
-    print(f"sklearn dengan pengaturan yang sama: macro F1 CV = {sklearn_score:.4f}")
+    sklearn_folds = fold_scores(y, sklearn_prob, folds, best["threshold"])
+    print(f"sklearn dengan pengaturan yang sama: macro F1 CV = {sklearn_score:.4f} (per fold {sklearn_folds.mean():.4f} ± {sklearn_folds.std():.4f})")
 
-    # Melatih ulang model final dengan seluruh train.csv
+    # Melatih ulang model final pakai seluruh train.csv.
+    print("\nMelatih model final pakai seluruh train.csv...", flush=True)
     features = InteractionFeatures().fit(train_df)
     X_full = features.transform(train_df)
     X_test = features.transform(test_df)
     model = make_model(best["config"]).fit(X_full, y)
     print(f"\nJumlah fitur model final: {X_full.shape[1]}")
+    print(f"Bobot yang bernilai nol: {np.sum(model.weights[1:] == 0)}")
 
     output_dir = ROOT / "output"
     output_dir.mkdir(exist_ok=True)
