@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from inspect import Parameter, signature
 from numbers import Integral
+from time import perf_counter
 
 import numpy as np
 import pandas as pd
@@ -12,6 +13,7 @@ import pandas as pd
 def tune(
     model, grid, X, y, method=None, *, n_splits=5, shuffle=True,
     random_state=42, stratified=True, scoring="f1_macro", predict_mode="batch",
+    verbose=True,
 ):
     """Mengembalikan tabel kombinasi parameter dan scorenya, diurutkan dari skor tertinggi."""
     _validate_data(X, y)
@@ -23,12 +25,17 @@ def tune(
 
     rows = []
     result_columns = {"params", "kfold_mean", "kfold_std"}
+    combinations = list(parameter_grid(grid))
+    start_time = perf_counter()
 
-    for params in parameter_grid(grid):
+    for combination_idx, params in enumerate(combinations, start=1):
         if result_columns.intersection(params):
             raise ValueError("Nama parameter bertabrakan dengan nama kolom hasil")
 
         candidate_model = clone_model(model, params)
+        if verbose:
+            print(f"\nKombinasi {combination_idx}/{len(combinations)}: {params}", flush=True)
+
         scores = kfold_scores(
             candidate_model, X, y, method,
             n_splits=n_splits,
@@ -37,6 +44,7 @@ def tune(
             stratified=stratified,
             scoring=scoring,
             predict_mode=predict_mode,
+            verbose=verbose,
         )
 
         row = {"params": params}
@@ -44,6 +52,19 @@ def tune(
         row["kfold_mean"] = float(scores.mean())
         row["kfold_std"] = float(scores.std())
         rows.append(row)
+
+        if verbose:
+            elapsed = perf_counter() - start_time
+            completed_fits = combination_idx * n_splits
+            total_fits = len(combinations) * n_splits
+            remaining = elapsed / combination_idx * (len(combinations) - combination_idx)
+            print(
+                f"Progress: {completed_fits}/{total_fits} fit "
+                f"({100 * combination_idx / len(combinations):.1f}%) | "
+                f"mean={scores.mean():.4f}, std={scores.std():.4f} | "
+                f"waktu={elapsed:.1f}s | estimasi sisa~{remaining:.1f}s",
+                flush=True,
+            )
 
     results = pd.DataFrame(rows)
     results = results.sort_values(
@@ -128,6 +149,7 @@ def _get_model_params(model):
 def kfold_scores(
     model, X, y, method=None, *, n_splits=5, shuffle=True,
     random_state=42, stratified=True, scoring="f1_macro", predict_mode="batch",
+    verbose=True,
 ):
     _validate_data(X, y)
 
@@ -155,7 +177,10 @@ def kfold_scores(
         stratified=stratified,
     )
 
-    for train_indices, valid_indices in folds:
+    for fold_idx, (train_indices, valid_indices) in enumerate(folds, start=1):
+        fold_start = perf_counter()
+        if verbose:
+            print(f"  Fold {fold_idx}/{n_splits}: menyiapkan data...", flush=True)
         # Pisahkan data berdasarkan posisi baris, bukan label indeks pandas.
         X_train = _take(X, train_indices)
         y_train = _take(y, train_indices)
@@ -169,8 +194,16 @@ def kfold_scores(
 
         # Gunakan model baru agar hasil training fold sebelumnya tidak terbawa.
         fold_model = clone_model(model)
+        if verbose:
+            print(
+                f"  Fold {fold_idx}/{n_splits}: training "
+                f"({len(X_train)} baris, {X_train.shape[1]} fitur)...",
+                flush=True,
+            )
         fold_model.fit(X_train, y_train)
 
+        if verbose:
+            print(f"  Fold {fold_idx}/{n_splits}: prediksi dan evaluasi...", flush=True)
         if predict_mode == "single":
             predictions = []
             for row in np.asarray(X_valid):
@@ -185,6 +218,9 @@ def kfold_scores(
             raise ValueError("Fungsi scoring harus menghasilkan skor finite")
 
         scores.append(score)
+        if verbose:
+            elapsed = perf_counter() - fold_start
+            print(f"  Fold {fold_idx}/{n_splits}: selesai | skor={score:.4f} | {elapsed:.1f}s", flush=True)
 
     return np.asarray(scores, dtype=float)
 
