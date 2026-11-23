@@ -7,6 +7,17 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+# Referensi tambahan di luar materi kuliah
+# C4.5: gain ratio dan pemisahan atribut numerik dengan threshold:
+#   - Quinlan (1993), C4.5: Programs for Machine Learning, Morgan Kaufmann
+#     https://www.sciencedirect.com/book/9780080500584/c4-5
+# Gini impurity dan penurunan impurity berbobot:
+#   - scikit-learn, Decision Trees, bagian Mathematical formulation
+#     https://scikit-learn.org/stable/modules/tree.html#mathematical-formulation
+# Batas pertumbuhan pohon (max_depth, min_sample_split, min_sample_leaf):
+#   - scikit-learn, DecisionTreeClassifier, bagian Parameters
+#     https://scikit-learn.org/stable/modules/generated/sklearn.tree.DecisionTreeClassifier.html
+
 
 @dataclass
 class Node:
