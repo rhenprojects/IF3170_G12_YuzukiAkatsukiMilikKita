@@ -17,6 +17,10 @@ import pandas as pd
 # Batas pertumbuhan pohon (max_depth, min_sample_split, min_sample_leaf):
 #   - scikit-learn, DecisionTreeClassifier, bagian Parameters
 #     https://scikit-learn.org/stable/modules/generated/sklearn.tree.DecisionTreeClassifier.html
+# Histogram-based split finding (bin, histogram kelas, dan jumlah kumulatif):
+#   - LightGBM, Features, bagian Optimization in Speed and Memory Usage
+#     https://lightgbm.readthedocs.io/en/stable/Features.html
+# Di sini teknik histogram diadaptasi untuk satu pohon dengan Gini/entropy/gain ratio.
 
 
 @dataclass
@@ -30,12 +34,14 @@ class Node:
 
 class DecisionTree:
     """criterion = entropy | gain_ratio | gini"""
-    def __init__(self, criterion="gain_ratio", max_depth=None, min_sample_split=5, min_sample_leaf=3, min_gain=0.0):
+    def __init__(self, criterion="gain_ratio", max_depth=None, min_sample_split=5, min_sample_leaf=3, min_gain=0.0, split_method="exact", max_bins=32):
         self.criterion = criterion
         self.max_depth = max_depth
         self.min_sample_split = min_sample_split
         self.min_sample_leaf = min_sample_leaf
         self.min_gain = min_gain
+        self.split_method = split_method
+        self.max_bins = max_bins
         self._validate_parameters()
         self.root = None
         self.column_names = None
@@ -180,28 +186,35 @@ class DecisionTree:
 
             if self.numeric_columns[attr_idx]:
                 values = np.asarray(values, dtype=float)
-                unique_values = np.unique(values)
-                # Coba batas di antara setiap pasangan nilai berurutan
-                for low, high in zip(unique_values[:-1], unique_values[1:]):
-                    threshold = low / 2 + high / 2
-                    if threshold >= high:  # Antisipasi pembulatan float.
-                        threshold = low
-                        
-                    mask = values <= threshold
-                    if not mask.any() or mask.all():
-                        continue
-                    
-                    children = [y_known[mask], y_known[~mask]]
-                    # Tolak kandidat jika salah satu anak akan terlalu kecil
-                    if not self._validate_min_sample_leaf(children, y_missing):
-                        continue
-
-                    score = self._calculate_score(y_known, children, y_missing)
-                        
-                    if score is not None and score > best_score:
+                if self.split_method == "histogram":
+                    threshold, score = self._find_best_histogram_split(values, y_known, y_missing)
+                    if score > best_score:
                         best_score = score
                         best_attr = attr_idx
-                        best_threshold = float(threshold)
+                        best_threshold = threshold
+                else:
+                    unique_values = np.unique(values)
+                    # Coba batas di antara setiap pasangan nilai berurutan
+                    for low, high in zip(unique_values[:-1], unique_values[1:]):
+                        threshold = low / 2 + high / 2
+                        if threshold >= high:  # Antisipasi pembulatan float
+                            threshold = low
+                            
+                        mask = values <= threshold
+                        if not mask.any() or mask.all():
+                            continue
+                        
+                        children = [y_known[mask], y_known[~mask]]
+                        # Tolak kandidat jika salah satu anak akan terlalu kecil
+                        if not self._validate_min_sample_leaf(children, y_missing):
+                            continue
+
+                        score = self._calculate_score(y_known, children, y_missing)
+                            
+                        if score is not None and score > best_score:
+                            best_score = score
+                            best_attr = attr_idx
+                            best_threshold = float(threshold)
                         
             else:
                 unique_values = pd.unique(values)
@@ -294,15 +307,17 @@ class DecisionTree:
         return all(size >= self.min_sample_leaf for size in child_counts)
 
     def _validate_parameters(self):
-        # Validasi criterion
+        if self.split_method not in ("exact", "histogram"):
+            raise ValueError('split_method harus "exact" atau "histogram"')
+        
         if self.criterion not in ("gain_ratio", "entropy", "gini"):
             raise ValueError('criterion harus "gain_ratio", "entropy", "gini"')
         
-        # Validasi max dan min value
         for name, value, minimum in [
             ("max_depth", self.max_depth, 0),
             ("min_sample_split", self.min_sample_split, 2),
             ("min_sample_leaf", self.min_sample_leaf, 1),
+            ("max_bins", self.max_bins, 2),
         ]:
             if name == "max_depth" and value is None:
                 continue
@@ -314,3 +329,74 @@ class DecisionTree:
             or self.min_gain < 0
         ):
             raise ValueError("min_gain harus angka >= 0")
+               
+    def _find_best_histogram_split(self, values, y_known, y_missing):
+        unique_values = np.unique(values)
+        n_bins = min(self.max_bins, len(unique_values))
+        if n_bins < 2:
+            return None, -np.inf
+
+        # Bagi urutan nilai unik menjadi maksimal max_bins kelompok
+        positions = np.arange(1, n_bins) * len(unique_values) // n_bins
+        lows, highs = unique_values[positions - 1], unique_values[positions]
+        
+        with np.errstate(invalid="ignore"):
+            thresholds = lows / 2 + highs / 2
+        thresholds = np.where(thresholds >= highs, lows, thresholds)
+        thresholds = np.unique(thresholds[~np.isnan(thresholds)])
+        if len(thresholds) == 0:
+            return None, -np.inf
+
+        bin_ids = np.searchsorted(thresholds, values, side="left")
+        _, class_codes = np.unique(y_known, return_inverse=True)
+        histogram = np.zeros((len(thresholds) + 1, class_codes.max() + 1), dtype=int)
+        np.add.at(histogram, (bin_ids, class_codes), 1)
+        cumulative_counts = histogram.cumsum(axis=0)
+        total_counts = cumulative_counts[-1]
+        parent_impurity = self._impurity_from_counts(total_counts)
+        missing_count = len(y_missing)
+        best_threshold, best_score = None, -np.inf
+
+        for threshold, left_counts in zip(thresholds, cumulative_counts[:-1]):
+            right_counts = total_counts - left_counts
+            sizes = np.array([left_counts.sum(), right_counts.sum()])
+            if min(sizes) == 0:
+                continue
+            
+            # Missing mengikuti cabang known terbesar
+            sizes[np.argmax(sizes)] += missing_count
+            if min(sizes) < self.min_sample_leaf:
+                continue
+            
+            score = self._score_histogram_split(parent_impurity, left_counts, right_counts, missing_count)
+            if score is not None and score > best_score:
+                best_threshold, best_score = float(threshold), score
+
+        return best_threshold, best_score
+
+    def _impurity_from_counts(self, counts):
+        probabilities = counts[counts > 0] / counts.sum()
+        if self.criterion == "gini":
+            return 1 - np.sum(probabilities ** 2)
+        return -np.sum(probabilities * np.log2(probabilities))
+
+    def _score_histogram_split(self, parent_impurity, left_counts, right_counts, missing_count):
+        sizes = np.array([left_counts.sum(), right_counts.sum()])
+        known_size = sizes.sum()
+        gain = parent_impurity
+        for size, counts in zip(sizes, [left_counts, right_counts]):
+            gain -= size / known_size * self._impurity_from_counts(counts)
+        gain *= known_size / (known_size + missing_count)
+        if gain < self.min_gain and not np.isclose(gain, self.min_gain, rtol=0, atol=1e-12):
+            return None
+        if self.criterion != "gain_ratio":
+            return gain
+
+        # Split information memasukkan missing sebagai kelompok tersendiri
+        if missing_count:
+            sizes = np.append(sizes, missing_count)
+        proportions = sizes / sizes.sum()
+        split_information = -np.sum(proportions * np.log2(proportions))
+        if split_information == 0:
+            return None
+        return max(0.0, gain) / split_information
