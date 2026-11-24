@@ -4,10 +4,16 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression as SklearnLogisticRegression
 
-from algorithms.logistic_regression import LogisticRegression
-from model_io import load_model, save_model
-from preprocessing import BINARY_FEATURES, CATEGORICAL_FEATURES, NUMERIC_FEATURES, build_logistic_regression_pipeline, prepare_data
-from tuning import macro_f1_score, tune
+if __package__:
+    from .algorithms.logistic_regression import LogisticRegression
+    from .model_io import load_model, save_model
+    from .preprocessing import BINARY_FEATURES, CATEGORICAL_FEATURES, NUMERIC_FEATURES, build_logistic_regression_pipeline, prepare_data
+    from .tuning import macro_f1_score, tune
+else:
+    from algorithms.logistic_regression import LogisticRegression
+    from model_io import load_model, save_model
+    from preprocessing import BINARY_FEATURES, CATEGORICAL_FEATURES, NUMERIC_FEATURES, build_logistic_regression_pipeline, prepare_data
+    from tuning import macro_f1_score, tune
 
 # Referensi
 # Pemilihan hyperparameter dengan k-fold cross-validation:
