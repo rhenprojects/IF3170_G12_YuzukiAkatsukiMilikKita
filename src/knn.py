@@ -89,13 +89,3 @@ def numeric_distance(a, b):
         total += abs(a[i] - b[i])
 
     return total
-
-# Distance for data kategorikal
-def categorical_distance(a, b):
-    total = 0
-
-    for i in range(len(a)):
-        if a[i] != b[i]:
-            total += 1
-
-    return total
