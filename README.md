@@ -34,9 +34,10 @@ Letakkan `train.csv`, `test.csv`, dan `sample_submission.csv` dari Kaggle di fol
 Semua perintah dijalankan dari root repository. Setiap runner melakukan preprocessing, training, evaluasi, menyimpan model ke `output/`, memuat ulang model untuk verifikasi, dan menghasilkan file submission.
 
 ```bash
-python src/run_decision_tree.py          # DTL (C4.5 / entropy / gini)
-python src/run_logistic_regression.py    # Logistic Regression (L1, L2, Elastic Net, AdaGrad)
-python src/run_naive_bayes.py            # Naive Bayes
+python src/runners/run_decision_tree.py          # DTL (C4.5 / entropy / gini)
+python src/runners/run_logistic_regression.py    # Logistic Regression (L1, L2, Elastic Net, AdaGrad)
+python src/runners/run_naive_bayes.py            # Naive Bayes
+python src/runners/run_svm.py                    # SVM
 python src/bonus_logistic_regression_video.py   # Video kontur log-loss (bonus)
 ```
 

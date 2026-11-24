@@ -1,4 +1,10 @@
 from pathlib import Path
+import sys
+
+# Tambahkan src agar runner bisa dijalankan langsung maupun sebagai modul.
+SRC_DIR = Path(__file__).resolve().parents[1]
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 import pandas as pd
 from sklearn.metrics import f1_score
@@ -7,7 +13,7 @@ from model_io import load_model, save_model
 from preprocessing import prepare_data
 from algorithms.naive_bayes import NaiveBayes
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = SRC_DIR.parent
 DATA_DIR = ROOT / "data"
 OUTPUT_DIR = ROOT / "output"
 MODEL_PATH = OUTPUT_DIR / "naive_bayes.pkl"

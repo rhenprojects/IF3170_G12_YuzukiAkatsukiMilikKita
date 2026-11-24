@@ -1,25 +1,25 @@
 from pathlib import Path
+import sys
+
+# Tambahkan src agar runner bisa dijalankan langsung maupun sebagai modul.
+SRC_DIR = Path(__file__).resolve().parents[1]
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression as SklearnLogisticRegression
 
-if __package__:
-    from .algorithms.logistic_regression import LogisticRegression
-    from .model_io import load_model, save_model
-    from .preprocessing import BINARY_FEATURES, CATEGORICAL_FEATURES, NUMERIC_FEATURES, build_logistic_regression_pipeline, prepare_data
-    from .tuning import macro_f1_score, tune
-else:
-    from algorithms.logistic_regression import LogisticRegression
-    from model_io import load_model, save_model
-    from preprocessing import BINARY_FEATURES, CATEGORICAL_FEATURES, NUMERIC_FEATURES, build_logistic_regression_pipeline, prepare_data
-    from tuning import macro_f1_score, tune
+from algorithms.logistic_regression import LogisticRegression
+from model_io import load_model, save_model
+from preprocessing import BINARY_FEATURES, CATEGORICAL_FEATURES, NUMERIC_FEATURES, build_logistic_regression_pipeline, prepare_data
+from tuning import macro_f1_score, tune
 
 # Referensi
 # Pemilihan hyperparameter dengan k-fold cross-validation:
 #   - Hastie, Tibshirani, Friedman, The Elements of Statistical Learning ed. 2, subbab 7.10.1
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = SRC_DIR.parent
 DATA_DIR = ROOT / "data"
 OUTPUT_DIR = ROOT / "output"
 MODEL_PATH = OUTPUT_DIR / "logistic_regression.pkl"
